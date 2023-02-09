@@ -10,7 +10,7 @@ use graphcast_sdk::{
         message_typing::{get_indexer_stake, GraphcastMessage},
         GossipAgent,
     },
-    graphql::{client_network::query_network_subgraph, client_registry::query_registry_indexer},
+    graphql::client_registry::query_registry_indexer,
 };
 use num_bigint::BigUint;
 use once_cell::sync::OnceCell;
@@ -85,14 +85,15 @@ pub fn update_blocks(
 /// Generate default topics that is operator address resolved to indexer address
 /// and then its active on-chain allocations
 pub async fn active_allocation_hashes(
-    network_subgraph: &str,
-    indexer_address: String,
+    _network_subgraph: &str,
+    _indexer_address: String,
 ) -> Result<Vec<String>, Box<dyn Error>> {
-    Ok(
-        query_network_subgraph(network_subgraph.to_string(), indexer_address.clone())
-            .await?
-            .indexer_allocations(),
-    )
+    // Ok(
+    //     query_network_subgraph(network_subgraph.to_string(), indexer_address.clone())
+    //         .await?
+    //         .indexer_allocations(),
+    // )
+    Ok(["QmbaLc7fEfLGUioKWehRhq838rRzeR8cBoapNJWNSAZE8u".to_string()].into())
 }
 
 /// This function processes the global messages map that we populate when

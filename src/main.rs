@@ -50,11 +50,11 @@ async fn main() {
     // Option for where to host the waku node instance
     let waku_host = env::var("WAKU_HOST").ok();
     let waku_port = env::var("WAKU_PORT").ok();
-    let waku_node_key = env::var("WAKU_NODE_KEY").ok();
+    let _waku_node_key = env::var("WAKU_NODE_KEY").ok();
 
     // Send message every x blocks for which wait y blocks before attestations
-    let examination_frequency = 3;
-    let wait_block_duration = 2;
+    let examination_frequency = 1;
+    let wait_block_duration = 1;
 
     let provider: Provider<Http> = Provider::<Http>::try_from(eth_node.clone()).unwrap();
     let wallet = private_key.parse::<LocalWallet>().unwrap();
@@ -79,7 +79,7 @@ async fn main() {
         &network_subgraph,
         read_boot_node_addresses(),
         topics,
-        waku_node_key,
+        // waku_node_key,
         waku_host,
         waku_port,
         None,
@@ -288,7 +288,7 @@ mod tests {
             &(mock_server.uri() + "/network-subgraph"),
             [].to_vec(),
             Some(vec!["some-hash".to_string()]),
-            None,
+            // None, # the node key
             None,
             None,
             None,

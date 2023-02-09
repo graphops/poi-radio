@@ -4,8 +4,10 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
-graphcast_sdk = { package = "graphcast-sdk", git = "https://github.com/graphops/graphcast-sdk" }
-waku = { package = "waku-bindings", git = "https://github.com/waku-org/waku-rust-bindings", rev="0fb4e2e" }
+# graphcast_sdk = { package = "graphcast-sdk", git = "https://github.com/graphops/graphcast-sdk" }
+# waku = { package = "waku-bindings", git = "https://github.com/waku-org/waku-rust-bindings", rev="0fb4e2e" }
+graphcast_sdk = { package = "graphcast-sdk", path = "../graphcast-rs" }
+waku = { package = "waku-bindings", version="0.1.0-beta3" }
 prost = "0.11"
 once_cell = "1.15"
 chrono = "0.4"
