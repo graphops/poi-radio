@@ -1,10 +1,12 @@
 use colored::*;
+use dotenv::dotenv;
 use ethers::signers::LocalWallet;
 use ethers::types::Block;
 use ethers::{
     providers::{Http, Middleware, Provider},
     types::U64,
 };
+/// Radio specific query function to fetch Proof of Indexing for each allocated subgraph
 use graphcast_sdk::gossip_agent::GossipAgent;
 use graphcast_sdk::graphql::client_network::query_network_subgraph;
 use graphcast_sdk::graphql::client_registry::query_registry_indexer;
@@ -14,17 +16,18 @@ use num_traits::Zero;
 use poi_radio::{
     active_allocation_hashes, attestation_handler, compare_attestations, process_messages,
     save_local_attestation, Attestation, LocalAttestationsMap, RadioPayloadMessage, GOSSIP_AGENT,
-    MESSAGES,
+    MESSAGES, SUPPORTED_NETWORK_INTERVALS,
 };
 use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, Mutex};
 use std::{thread::sleep, time::Duration};
+use tracing::log::warn;
 use tracing::{debug, error, info};
 
-use dotenv::dotenv;
-/// Radio specific query function to fetch Proof of Indexing for each allocated subgraph
 use graphql::query_graph_node_poi;
+
+use crate::graphql::{query_graph_node_deployment_network, query_graph_node_network_block_hash};
 
 mod graphql;
 
@@ -53,10 +56,22 @@ async fn main() {
     let waku_node_key = env::var("WAKU_NODE_KEY").ok();
 
     // Send message every x blocks for which wait y blocks before attestations
-    let examination_frequency = 3;
     let wait_block_duration = 2;
 
     let provider: Provider<Http> = Provider::<Http>::try_from(eth_node.clone()).unwrap();
+    // Initialize providers for indexing networks in the format of PROVIDER_[NETWORK]
+    let provider_endpoints: HashMap<&'static str, Option<Provider<Http>>> =
+        SUPPORTED_NETWORK_INTERVALS
+            .iter()
+            .map(|(&network, &_interval)| {
+                (
+                    network,
+                    env::var("PROVIDER_".to_string() + network.to_uppercase().as_str())
+                        .ok()
+                        .and_then(|endpoint| Provider::<Http>::try_from(endpoint).ok()),
+                )
+            })
+            .collect();
     let wallet = private_key.parse::<LocalWallet>().unwrap();
     let radio_name: &str = "poi-radio";
 
@@ -165,22 +180,58 @@ async fn main() {
             }
         }
 
-        // Send POI message at a fixed frequency
-        if block_number % examination_frequency == 0 {
-            compare_block = block_number + wait_block_duration;
+        // Radio specific message content query function
+        // Function takes in an identifier string and make specific queries regarding the identifier
+        // The example here combines a single function provided query endpoint, current block info based on the subgraph's indexing network
+        // Then the function gets sent to agent for making identifier independent queries
+        let identifiers = GOSSIP_AGENT.get().unwrap().content_identifiers();
+        for id in identifiers {
+            // Get the indexing network of the deployment
+            let network = match query_graph_node_deployment_network(
+                graph_node_endpoint.clone(),
+                id.clone(),
+            )
+            .await
+            {
+                Ok(network) => network,
+                Err(e) => {
+                    warn!("Could not query for the subgraph's indexing network, check Graph node's indexing statuses of the deployment {}: {}", id.clone(), e);
+                    continue;
+                }
+            };
 
-            let block: Block<_> = provider.get_block(block_number).await.unwrap().unwrap();
-            let block_hash = format!("{:#x}", block.hash.unwrap());
+            let poi_query =
+                partial!( query_graph_node_poi => graph_node_endpoint.clone(), id.clone(), _, _);
+            // get the indexing network's block provider and consensus block
+            let indexing_network_provider: &Provider<Http> = provider_endpoints.get(&network[..]).unwrap_or_else(|| panic!("Missing a block provider for the indexing network {}, please provide one named `PROVIDER_{}`", network.clone(), network.clone().to_uppercase())).as_ref().expect("Could not make construct a valid provider");
+            let block_number =
+                U64::as_u64(&indexing_network_provider.get_block_number().await.unwrap()) - 5;
+            // Send POI message at a fixed frequency
+            let examination_frequency = SUPPORTED_NETWORK_INTERVALS.get(&network[..]).expect("Subgraph is indexing an unsupported network, please report an issue on https://github.com/graphops/graphcast-rs");
+            if block_number % examination_frequency == 0 {
+                //TODO: compare_block and attestation need to be network based
+                compare_block = block_number + wait_block_duration;
+                // block number and hash can actually be queried from graph node, but need a deterministic consensus on block number
+                let block_hash = match query_graph_node_network_block_hash(
+                    graph_node_endpoint.clone(),
+                    network.clone().to_lowercase(),
+                    block_number.try_into().unwrap(),
+                )
+                .await
+                {
+                    Ok(hash) => hash,
+                    Err(e) => {
+                        warn!("Failed to query graph node for the block hash: {e}");
+                        let block: Block<_> = indexing_network_provider
+                            .get_block(block_number)
+                            .await
+                            .unwrap()
+                            .unwrap();
+                        format!("{:#x}", block.hash.unwrap())
+                    }
+                };
 
-            // Radio specific message content query function
-            // Function takes in an identifier string and make specific queries regarding the identifier
-            // The example here combines a single function provided query endpoint, current block info
-            // Then the function gets sent to agent for making identifier independent queries
-            let poi_query = partial!( query_graph_node_poi => graph_node_endpoint.clone(), _, block_hash.to_string(),block_number.try_into().unwrap());
-            let identifiers = GOSSIP_AGENT.get().unwrap().content_identifiers();
-
-            for id in identifiers {
-                match poi_query(id.clone()).await {
+                match poi_query(block_hash, block_number.try_into().unwrap()).await {
                     Ok(content) => {
                         let attestation = Attestation {
                             npoi: content.clone(),

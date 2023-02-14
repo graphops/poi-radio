@@ -1,9 +1,20 @@
+use anyhow::anyhow;
+use colored::*;
+use ethers_contract::EthAbiType;
+use ethers_core::types::transaction::eip712::Eip712;
+use ethers_derive_eip712::*;
+use lazy_static::lazy_static;
+use num_bigint::BigUint;
+use once_cell::sync::OnceCell;
+use prost::Message;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     error::Error,
     sync::{Arc, Mutex},
 };
 use tokio::sync::Mutex as AsyncMutex;
+use tracing::error;
 
 use graphcast_sdk::{
     gossip_agent::{
@@ -12,17 +23,6 @@ use graphcast_sdk::{
     },
     graphql::{client_network::query_network_subgraph, client_registry::query_registry_indexer},
 };
-use num_bigint::BigUint;
-use once_cell::sync::OnceCell;
-
-use anyhow::anyhow;
-use colored::*;
-use ethers_contract::EthAbiType;
-use ethers_core::types::transaction::eip712::Eip712;
-use ethers_derive_eip712::*;
-use prost::Message;
-use serde::{Deserialize, Serialize};
-use tracing::error;
 
 #[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize)]
 #[eip712(
@@ -49,6 +49,25 @@ impl RadioPayloadMessage {
     pub fn payload_content(&self) -> String {
         self.content.clone()
     }
+}
+
+// Maybe move to SDK
+lazy_static! {
+    pub static ref SUPPORTED_NETWORK_INTERVALS: HashMap<&'static str, u64> = [
+        ("goerli", 2),
+        ("mainnet", 10),
+        ("gnosis", 5),
+        ("hardhat", 5),
+        ("arbitrum-one", 5),
+        ("arbitrum-goerli", 5),
+        ("avalanche", 5),
+        ("polygon", 5),
+        ("celo", 5),
+        ("optimism", 5),
+    ]
+    .iter()
+    .cloned()
+    .collect();
 }
 
 pub type RemoteAttestationsMap = HashMap<String, HashMap<u64, Vec<Attestation>>>;
