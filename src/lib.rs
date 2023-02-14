@@ -3,11 +3,12 @@ use colored::*;
 use ethers_contract::EthAbiType;
 use ethers_core::types::transaction::eip712::Eip712;
 use ethers_derive_eip712::*;
-use lazy_static::lazy_static;
 use num_bigint::BigUint;
+use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
 use prost::Message;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::{
     collections::HashMap,
     error::Error,
@@ -51,24 +52,114 @@ impl RadioPayloadMessage {
     }
 }
 
-// Maybe move to SDK
-lazy_static! {
-    pub static ref SUPPORTED_NETWORK_INTERVALS: HashMap<&'static str, u64> = [
-        ("goerli", 2),
-        ("mainnet", 10),
-        ("gnosis", 5),
-        ("hardhat", 5),
-        ("arbitrum-one", 5),
-        ("arbitrum-goerli", 5),
-        ("avalanche", 5),
-        ("polygon", 5),
-        ("celo", 5),
-        ("optimism", 5),
-    ]
-    .iter()
-    .cloned()
-    .collect();
+#[derive(Debug, Clone)]
+pub struct Network {
+    pub name: NetworkName,
+    pub interval: u64,
 }
+
+pub struct BlockClock {
+    pub current_block: u64,
+    pub compare_block: u64,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum NetworkName {
+    Goerli,
+    Mainnet,
+    Gnosis,
+    Hardhat,
+    ArbitrumOne,
+    ArbitrumGoerli,
+    Avalanche,
+    Polygon,
+    Celo,
+    Optimism,
+    Unknown,
+}
+
+impl NetworkName {
+    pub fn from_string(name: &str) -> Self {
+        match name {
+            "goerli" => NetworkName::Goerli,
+            "mainnet" => NetworkName::Mainnet,
+            "gnosis" => NetworkName::Gnosis,
+            "hardhat" => NetworkName::Hardhat,
+            "arbitrum-one" => NetworkName::ArbitrumOne,
+            "arbitrum-goerli" => NetworkName::ArbitrumGoerli,
+            "avalanche" => NetworkName::Avalanche,
+            "polygon" => NetworkName::Polygon,
+            "celo" => NetworkName::Celo,
+            "optimism" => NetworkName::Optimism,
+            _ => NetworkName::Unknown,
+        }
+    }
+}
+
+impl fmt::Display for NetworkName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            NetworkName::Goerli => "goerli",
+            NetworkName::Mainnet => "mainnet",
+            NetworkName::Gnosis => "gnosis",
+            NetworkName::Hardhat => "hardhat",
+            NetworkName::ArbitrumOne => "arbitrum-one",
+            NetworkName::ArbitrumGoerli => "arbitrum-goerli",
+            NetworkName::Avalanche => "avalanche",
+            NetworkName::Polygon => "polygon",
+            NetworkName::Celo => "celo",
+            NetworkName::Optimism => "optimism",
+            NetworkName::Unknown => "unknown",
+        };
+
+        write!(f, "{}", name)
+    }
+}
+
+pub static NETWORKS: Lazy<Vec<Network>> = Lazy::new(|| {
+    vec![
+        Network {
+            name: NetworkName::from_string("goerli"),
+            interval: 2,
+        },
+        Network {
+            name: NetworkName::from_string("mainnet"),
+            interval: 10,
+        },
+        Network {
+            name: NetworkName::from_string("gnosis"),
+            interval: 5,
+        },
+        Network {
+            name: NetworkName::from_string("hardhat"),
+            interval: 5,
+        },
+        Network {
+            name: NetworkName::from_string("arbitrum-one"),
+            interval: 5,
+        },
+        Network {
+            name: NetworkName::from_string("arbitrum-goerli"),
+            interval: 5,
+        },
+        Network {
+            name: NetworkName::from_string("avalanche"),
+            interval: 5,
+        },
+        Network {
+            name: NetworkName::from_string("polygon"),
+            interval: 5,
+        },
+        Network {
+            name: NetworkName::from_string("celo"),
+            interval: 5,
+        },
+        Network {
+            name: NetworkName::from_string("optimism"),
+            interval: 5,
+        },
+    ]
+});
 
 pub type RemoteAttestationsMap = HashMap<String, HashMap<u64, Vec<Attestation>>>;
 pub type LocalAttestationsMap = HashMap<String, HashMap<u64, Attestation>>;

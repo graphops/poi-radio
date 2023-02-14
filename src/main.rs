@@ -15,8 +15,8 @@ use num_bigint::BigUint;
 use num_traits::Zero;
 use poi_radio::{
     active_allocation_hashes, attestation_handler, compare_attestations, process_messages,
-    save_local_attestation, Attestation, LocalAttestationsMap, RadioPayloadMessage, GOSSIP_AGENT,
-    MESSAGES, SUPPORTED_NETWORK_INTERVALS,
+    save_local_attestation, Attestation, BlockClock, LocalAttestationsMap, NetworkName,
+    RadioPayloadMessage, GOSSIP_AGENT, MESSAGES, NETWORKS,
 };
 use std::collections::HashMap;
 use std::env;
@@ -58,20 +58,20 @@ async fn main() {
     // Send message every x blocks for which wait y blocks before attestations
     let wait_block_duration = 2;
 
-    let provider: Provider<Http> = Provider::<Http>::try_from(eth_node.clone()).unwrap();
-    // Initialize providers for indexing networks in the format of PROVIDER_[NETWORK]
-    let provider_endpoints: HashMap<&'static str, Option<Provider<Http>>> =
-        SUPPORTED_NETWORK_INTERVALS
-            .iter()
-            .map(|(&network, &_interval)| {
-                (
-                    network,
-                    env::var("PROVIDER_".to_string() + network.to_uppercase().as_str())
-                        .ok()
-                        .and_then(|endpoint| Provider::<Http>::try_from(endpoint).ok()),
-                )
-            })
-            .collect();
+    // Initialize providers for indexing networks in the format of PROVIDER_[NETWORK_NAME]
+    let provider_endpoints: HashMap<NetworkName, Option<Provider<Http>>> = NETWORKS
+        .iter()
+        .map(|n| {
+            let network_name = n.name;
+            (
+                network_name.clone(),
+                env::var("PROVIDER_".to_string() + &network_name.to_string().to_uppercase())
+                    .ok()
+                    .and_then(|endpoint| Provider::<Http>::try_from(endpoint).ok()),
+            )
+        })
+        .collect();
+
     let wallet = private_key.parse::<LocalWallet>().unwrap();
     let radio_name: &str = "poi-radio";
 
@@ -112,8 +112,7 @@ async fn main() {
         .register_handler(radio_handler)
         .expect("Could not register handler");
 
-    let mut curr_block = 0;
-    let mut compare_block: u64 = 0;
+    let mut block_store: HashMap<NetworkName, BlockClock> = HashMap::new();
 
     let local_attestations: Arc<Mutex<LocalAttestationsMap>> = Arc::new(Mutex::new(HashMap::new()));
 
@@ -133,53 +132,6 @@ async fn main() {
     // Main loop for sending messages, can factor out
     // and take radio specific query and parsing for radioPayload
     loop {
-        let block_number = U64::as_u64(&provider.get_block_number().await.unwrap()) - 5;
-
-        if curr_block == block_number {
-            sleep(Duration::from_secs(5));
-            continue;
-        }
-
-        debug!("{} {}", "🔗 Block number:".cyan(), block_number);
-        curr_block = block_number;
-
-        if block_number == compare_block {
-            debug!("{}", "Comparing attestations".magenta());
-
-            let remote_attestations = process_messages(
-                Arc::clone(MESSAGES.get().unwrap()),
-                &registry_subgraph,
-                &network_subgraph,
-            )
-            .await;
-            match remote_attestations {
-                Ok(remote_attestations) => {
-                    let mut messages = MESSAGES.get().unwrap().lock().unwrap();
-                    match compare_attestations(
-                        compare_block - wait_block_duration,
-                        remote_attestations,
-                        Arc::clone(&local_attestations),
-                    ) {
-                        Ok(msg) => {
-                            debug!("{}", msg.green().bold());
-                            messages.clear();
-                        }
-                        Err(err) => {
-                            error!("{}", err);
-                            messages.clear();
-                        }
-                    }
-                }
-                Err(err) => {
-                    error!(
-                        "{}{}",
-                        "An error occured while parsing messages: {}".red().bold(),
-                        err
-                    );
-                }
-            }
-        }
-
         // Radio specific message content query function
         // Function takes in an identifier string and make specific queries regarding the identifier
         // The example here combines a single function provided query endpoint, current block info based on the subgraph's indexing network
@@ -187,34 +139,107 @@ async fn main() {
         let identifiers = GOSSIP_AGENT.get().unwrap().content_identifiers();
         for id in identifiers {
             // Get the indexing network of the deployment
-            let network = match query_graph_node_deployment_network(
+            let network_name = match query_graph_node_deployment_network(
                 graph_node_endpoint.clone(),
                 id.clone(),
             )
             .await
             {
-                Ok(network) => network,
+                Ok(network) => NetworkName::from_string(&network),
                 Err(e) => {
                     warn!("Could not query for the subgraph's indexing network, check Graph node's indexing statuses of the deployment {}: {}", id.clone(), e);
                     continue;
                 }
             };
 
-            let poi_query =
-                partial!( query_graph_node_poi => graph_node_endpoint.clone(), id.clone(), _, _);
-            // get the indexing network's block provider and consensus block
-            let indexing_network_provider: &Provider<Http> = provider_endpoints.get(&network[..]).unwrap_or_else(|| panic!("Missing a block provider for the indexing network {}, please provide one named `PROVIDER_{}`", network.clone(), network.clone().to_uppercase())).as_ref().expect("Could not make construct a valid provider");
+            let provider_name = format!("PROVIDER_{}", network_name.to_string().to_uppercase());
+            let indexing_network_provider = if let Some(provider) = provider_endpoints.get(&network_name) {
+                provider.as_ref().unwrap()
+            } else {
+                error!(
+                    "Missing a block provider for the indexing network {}, please provide one named `{}`",
+                    network_name,
+                    provider_name
+                );
+                continue;
+            };
+
             let block_number =
                 U64::as_u64(&indexing_network_provider.get_block_number().await.unwrap()) - 5;
+
+            let block_clock = block_store
+                .entry(network_name)
+                .or_insert_with(|| BlockClock {
+                    current_block: 0,
+                    compare_block: 0,
+                });
+
+            if block_clock.current_block == block_number {
+                sleep(Duration::from_secs(5));
+                continue;
+            }
+
+            debug!("{} {}", "🔗 Block number:".cyan(), block_number);
+            block_clock.current_block = block_number;
+
+            if block_number == block_clock.compare_block {
+                debug!("{}", "Comparing attestations".magenta());
+
+                let remote_attestations = process_messages(
+                    Arc::clone(MESSAGES.get().unwrap()),
+                    &registry_subgraph,
+                    &network_subgraph,
+                )
+                .await;
+                match remote_attestations {
+                    Ok(remote_attestations) => {
+                        let mut messages = MESSAGES.get().unwrap().lock().unwrap();
+                        match compare_attestations(
+                            block_clock.compare_block - wait_block_duration,
+                            remote_attestations,
+                            Arc::clone(&local_attestations),
+                        ) {
+                            Ok(msg) => {
+                                debug!("{}", msg.green().bold());
+                                messages.clear();
+                            }
+                            Err(err) => {
+                                error!("{}", err);
+                                messages.clear();
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        error!(
+                            "{}{}",
+                            "An error occured while parsing messages: {}".red().bold(),
+                            err
+                        );
+                    }
+                }
+            }
+
+            let poi_query =
+                partial!( query_graph_node_poi => graph_node_endpoint.clone(), id.clone(), _, _);
+
             // Send POI message at a fixed frequency
-            let examination_frequency = SUPPORTED_NETWORK_INTERVALS.get(&network[..]).expect("Subgraph is indexing an unsupported network, please report an issue on https://github.com/graphops/graphcast-rs");
+            let examination_frequency = NETWORKS
+                .iter()
+                .find(|n| n.name.to_string() == network_name.to_string())
+                .map(|n| n.interval)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Subgraph is indexing an unsupported network, please report an issue on https://github.com/graphops/graphcast-rs"
+                    );
+            });
+
             if block_number % examination_frequency == 0 {
                 //TODO: compare_block and attestation need to be network based
-                compare_block = block_number + wait_block_duration;
+                block_clock.compare_block = block_number + wait_block_duration;
                 // block number and hash can actually be queried from graph node, but need a deterministic consensus on block number
                 let block_hash = match query_graph_node_network_block_hash(
                     graph_node_endpoint.clone(),
-                    network.clone().to_lowercase(),
+                    network_name.to_string().to_lowercase(),
                     block_number.try_into().unwrap(),
                 )
                 .await
