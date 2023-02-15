@@ -25,4 +25,4 @@ RUN sh install-golang.sh
 ENV PATH=$PATH:/usr/local/go/bin
 
 RUN cargo build
-CMD ["cargo", "run", "boot"]
+CMD ["cargo", "run"]
