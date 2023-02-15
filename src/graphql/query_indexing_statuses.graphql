@@ -1,5 +1,5 @@
-query IndexingStatuses($deployments: [String!]!) {
-  indexingStatuses(subgraphs: $deployments) {
+query IndexingStatuses {
+  indexingStatuses {
     subgraph
     synced
     health

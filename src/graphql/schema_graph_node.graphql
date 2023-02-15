@@ -23,9 +23,7 @@ type IndexerDeployment {
 }
 
 type Query {
-  indexingStatuses(
-    subgraphs: [String!]!
-  ): [IndexerDeployment!]!
+  indexingStatuses: [IndexerDeployment!]!
   proofOfIndexing(
     subgraph: String!
     blockNumber: Int!

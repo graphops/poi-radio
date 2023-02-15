@@ -58,6 +58,18 @@ pub struct Network {
     pub interval: u64,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct BlockPointer {
+    pub hash: String,
+    pub number: u64,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SubgraphStatus {
+    pub network: String,
+    pub block: BlockPointer,
+}
+
 pub struct BlockClock {
     pub current_block: u64,
     pub compare_block: u64,
