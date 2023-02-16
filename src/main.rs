@@ -10,9 +10,9 @@ use hex::encode;
 use num_bigint::BigUint;
 use num_traits::Zero;
 use poi_radio::{
-    active_allocation_hashes, attestation_handler, compare_attestations, process_messages,
-    save_local_attestation, Attestation, BlockClock, BlockPointer, LocalAttestationsMap,
-    NetworkName, RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES, NETWORKS,
+    attestation_handler, compare_attestations, process_messages, save_local_attestation,
+    Attestation, BlockClock, BlockPointer, LocalAttestationsMap, NetworkName, RadioPayloadMessage,
+    GRAPHCAST_AGENT, MESSAGES, NETWORKS,
 };
 use rand::{thread_rng, Rng};
 use secp256k1::SecretKey;
@@ -145,7 +145,7 @@ async fn main() {
     );
 
     let graph_node_endpoint =
-    env::var("GRAPH_NODE_STATUS_ENDPOINT").expect("No Graph node status endpoint provided.");
+        env::var("GRAPH_NODE_STATUS_ENDPOINT").expect("No Graph node status endpoint provided.");
 
     let private_key = env::var("PRIVATE_KEY").unwrap();
     let eth_node = env::var("ETH_NODE").expect("No ETH URL provided.");
@@ -165,7 +165,9 @@ async fn main() {
         &(mock_server.uri() + "/graphcast-registry"),
         &(mock_server.uri() + "/network-subgraph"),
         read_boot_node_addresses(),
-        Some(vec!["QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string()]),
+        Some(vec![
+            "QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string()
+        ]),
         waku_node_key,
         waku_host,
         waku_port,
@@ -460,7 +462,9 @@ mod tests {
             &(mock_server.uri() + "/graphcast-registry"),
             &(mock_server.uri() + "/network-subgraph"),
             [].to_vec(),
-            Some(vec!["QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string()]),
+            Some(vec![
+                "QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string()
+            ]),
             None,
             None,
             None,
@@ -486,7 +490,11 @@ mod tests {
         GRAPHCAST_AGENT
             .get()
             .unwrap()
-            .send_message("QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string(), 0, Some(radio_msg.clone()))
+            .send_message(
+                "QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string(),
+                0,
+                Some(radio_msg.clone()),
+            )
             .await
             .unwrap();
 
@@ -498,7 +506,11 @@ mod tests {
             GRAPHCAST_AGENT
                 .get()
                 .unwrap()
-                .send_message("QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string(), block, Some(radio_msg.clone()))
+                .send_message(
+                    "QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string(),
+                    block,
+                    Some(radio_msg.clone()),
+                )
                 .await
                 .unwrap();
 
