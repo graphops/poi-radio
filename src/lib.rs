@@ -136,7 +136,7 @@ pub static NETWORKS: Lazy<Vec<Network>> = Lazy::new(|| {
         },
         Network {
             name: NetworkName::from_string("mainnet"),
-            interval: 10,
+            interval: 4,
         },
         Network {
             name: NetworkName::from_string("gnosis"),
