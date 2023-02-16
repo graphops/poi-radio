@@ -111,6 +111,7 @@ async fn main() {
         .respond_with(ResponseTemplate::new(200).set_body_string(
             r#"{
                 "data": {
+                  "proofOfIndexing": "0x25331f98b82ca7f3966256bf508a7ede52e715b631dfa3d73b846bb7617f6b9e",
                   "blockHashFromNumber":"4dbba1ba9fb18b0034965712598be1368edcf91ae2c551d59462aab578dab9c5",
                   "indexingStatuses": [
                     {
