@@ -146,6 +146,11 @@ async fn main() {
         format!("{}{}", &mock_server.uri(), "/graphql"),
     );
 
+    env::set_var(
+        "REGISTRY_SUBGRAPH_ENDPOINT",
+        format!("{}{}", &mock_server.uri(), "/graphcast-registry"),
+    );
+
     let graph_node_endpoint =
         env::var("GRAPH_NODE_STATUS_ENDPOINT").expect("No Graph node status endpoint provided.");
 
