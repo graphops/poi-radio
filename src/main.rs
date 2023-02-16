@@ -1,5 +1,4 @@
 use colored::*;
-use dotenv::dotenv;
 use ethers::signers::LocalWallet;
 /// Radio specific query function to fetch Proof of Indexing for each allocated subgraph
 use graphcast_sdk::graphcast_agent::GraphcastAgent;
@@ -36,36 +35,6 @@ extern crate partial_application;
 
 #[tokio::main]
 async fn main() {
-    dotenv().ok();
-    init_tracing().expect("Could not set up global default subscriber");
-
-    let private_key = env::var("PRIVATE_KEY").expect("No private key provided.");
-
-    // Subgraph endpoints
-    let registry_subgraph =
-        env::var("REGISTRY_SUBGRAPH").expect("No registry subgraph endpoint provided.");
-    let network_subgraph =
-        env::var("NETWORK_SUBGRAPH").expect("No network subgraph endpoint provided.");
-
-    // Option for where to host the waku node instance
-    let waku_host = env::var("WAKU_HOST").ok();
-    let waku_port = env::var("WAKU_PORT").ok();
-    let waku_node_key = env::var("WAKU_NODE_KEY").ok();
-
-    // Send message every x blocks for which wait y blocks before attestations
-    let wait_block_duration = 2;
-
-    let wallet = private_key.parse::<LocalWallet>().unwrap();
-    let mut rng = thread_rng();
-    let mut private_key = [0u8; 32];
-    rng.fill(&mut private_key[..]);
-
-    let private_key = SecretKey::from_slice(&private_key).expect("Error parsing secret key");
-    let private_key_hex = encode(private_key.secret_bytes());
-    env::set_var("PRIVATE_KEY", &private_key_hex);
-
-    //&(mock_server.uri() + "/graphcast-registry"&(mock_server.uri() + "/graphcast-registry"
-
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -73,12 +42,17 @@ async fn main() {
         .respond_with(ResponseTemplate::new(200).set_body_string(
             r#"{
                 "data": {
-                    "indexer": {
-                        "graphcastID": "0x54f4cdc1ac7cd3377f43834fbde09a7ffe6fe337"
+                  "indexers": [
+                    {
+                      "graphcastID": "0xd8b0a336a27e57dd163d19e49bb153c631c49697",
+                      "id": "0x54f4cdc1ac7cd3377f43834fbde09a7ffe6fe227"
                     }
+                  ]
                 },
-                "errors": null
-            }"#,
+                "errors": null,
+                "extensions": null
+              }
+              "#,
         ))
         .mount(&mock_server)
         .await;
@@ -123,11 +97,11 @@ async fn main() {
                         {
                           "network": "mainnet",
                           "latestBlock": {
-                            "number": "16642243",
+                            "number": "16642242",
                             "hash": "b30395958a317ccc06da46782f660ce674cbe6792e5573dc630978c506114a0a"
                           },
                           "chainHeadBlock": {
-                            "number": "16642243",
+                            "number": "16642242",
                             "hash": "b30395958a317ccc06da46782f660ce674cbe6792e5573dc630978c506114a0a"
                           }
                         }
@@ -150,6 +124,32 @@ async fn main() {
         "REGISTRY_SUBGRAPH_ENDPOINT",
         format!("{}{}", &mock_server.uri(), "/graphcast-registry"),
     );
+
+    init_tracing().expect("Could not set up global default subscriber");
+
+    let private_key = env::var("PRIVATE_KEY").expect("No private key provided.");
+
+        // Subgraph endpoints
+    let registry_subgraph =
+        env::var("REGISTRY_SUBGRAPH_ENDPOINT").expect("No registry subgraph endpoint provided.");
+    let network_subgraph = "https://gateway.testnet.thegraph.com/network";
+
+    // Option for where to host the waku node instance
+    let waku_host = env::var("WAKU_HOST").ok();
+    let waku_port = env::var("WAKU_PORT").ok();
+    let waku_node_key = env::var("WAKU_NODE_KEY").ok();
+
+    // Send message every x blocks for which wait y blocks before attestations
+    let wait_block_duration = 2;
+
+    let wallet = private_key.parse::<LocalWallet>().unwrap();
+    let mut rng = thread_rng();
+    let mut private_key = [0u8; 32];
+    rng.fill(&mut private_key[..]);
+
+    let private_key = SecretKey::from_slice(&private_key).expect("Error parsing secret key");
+    let private_key_hex = encode(private_key.secret_bytes());
+    env::set_var("PRIVATE_KEY", &private_key_hex);
 
     let graph_node_endpoint =
         env::var("GRAPH_NODE_STATUS_ENDPOINT").expect("No Graph node status endpoint provided.");
@@ -293,15 +293,19 @@ async fn main() {
                 continue;
             }
 
-            debug!("{} {}", "🔗 Block number:".cyan(), message_block);
+            debug!("{} {}", "🔗 MSG Block number:".cyan(), message_block);
             block_clock.current_block = latest_block.number;
+
+            debug!("{} {}", "🔗 CURRENT:".cyan(), block_clock.current_block);
+            debug!("{} {}", "🔗 latest_block:".cyan(), latest_block.number);
+            debug!("{} {}", "🔗 COMPARE:".cyan(),block_clock.compare_block);
 
             if latest_block.number == block_clock.compare_block {
                 debug!("{}", "Comparing attestations".magenta());
 
                 let remote_attestations = process_messages(
                     Arc::clone(MESSAGES.get().unwrap()),
-                    &registry_subgraph,
+                    &format!("{}{}", &mock_server.uri(), "/graphcast-registry"),
                     &network_subgraph,
                 )
                 .await;
@@ -340,6 +344,7 @@ async fn main() {
                 "Checking latest block number and the message block: {0} >?= {message_block}",
                 latest_block.number
             );
+
             if latest_block.number >= message_block {
                 block_clock.compare_block = message_block + wait_block_duration;
                 // block number and hash can actually be queried from graph node, but need a deterministic consensus on block number
@@ -390,143 +395,5 @@ async fn main() {
 
         sleep(Duration::from_secs(5));
         continue;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hex::encode;
-    use rand::{thread_rng, Rng};
-    use secp256k1::SecretKey;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    #[tokio::test]
-    #[ignore]
-    async fn regression_test() {
-        dotenv().ok();
-
-        let is_display = matches!(std::env::args().nth(1), Some(x) if x == *"display");
-        let mut rng = thread_rng();
-        let mut private_key = [0u8; 32];
-        rng.fill(&mut private_key[..]);
-
-        let private_key = SecretKey::from_slice(&private_key).expect("Error parsing secret key");
-        let private_key_hex = encode(private_key.secret_bytes());
-        env::set_var("PRIVATE_KEY", &private_key_hex);
-
-        let mock_server = MockServer::start().await;
-
-        Mock::given(method("POST"))
-            .and(path("/graphcast-registry"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{
-                    "data": {
-                        "indexer": {
-                            "graphcastID": "0x54f4cdc1ac7cd3377f43834fbde09a7ffe6fe337"
-                        }
-                    },
-                    "errors": null
-                }"#,
-            ))
-            .mount(&mock_server)
-            .await;
-
-        Mock::given(method("POST"))
-            .and(path("/network-subgraph"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{
-                    "data": {
-                        "indexer" : {
-                            "stakedTokens": "100000000000000000000000",
-                            "allocations": [{
-                                "subgraphDeployment": {
-                                    "ipfsHash": "QmbaLc7fEfLGUioKWehRhq838rRzeR8cBoapNJWNSAZE8u"
-                                }
-                            }]
-                        },
-                        "graphNetwork": {
-                            "minimumIndexerStake": "100000000000000000000000"
-                        }
-                    },
-                    "errors": null
-                }"#,
-            ))
-            .mount(&mock_server)
-            .await;
-
-        let private_key = env::var("PRIVATE_KEY").expect("No private key provided.");
-        let eth_node = env::var("ETH_NODE").expect("No ETH URL provided.");
-
-        // TODO: Add something random and unique here to avoid noise form other operators
-        let radio_name: &str = "test-poi-crosschecker-radio";
-
-        let graphcast_agent = GraphcastAgent::new(
-            private_key,
-            eth_node,
-            radio_name,
-            &(mock_server.uri() + "/graphcast-registry"),
-            &(mock_server.uri() + "/network-subgraph"),
-            [].to_vec(),
-            Some(vec![
-                "QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string()
-            ]),
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        _ = GRAPHCAST_AGENT.set(graphcast_agent);
-        _ = MESSAGES.set(Arc::new(Mutex::new(vec![])));
-
-        let radio_handler = Arc::new(Mutex::new(attestation_handler()));
-        GRAPHCAST_AGENT
-            .get()
-            .unwrap()
-            .register_handler(radio_handler)
-            .expect("Could not register handler (Should not get here)");
-        let hash = "QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string();
-        let content = "poi".to_string();
-
-        let radio_msg = RadioPayloadMessage::new(hash.clone(), content.clone());
-        // Just to introduce sender and skip first time check
-        GRAPHCAST_AGENT
-            .get()
-            .unwrap()
-            .send_message(
-                "QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string(),
-                0,
-                Some(radio_msg.clone()),
-            )
-            .await
-            .unwrap();
-
-        sleep(Duration::from_secs(1));
-
-        let mut block = 1;
-
-        loop {
-            GRAPHCAST_AGENT
-                .get()
-                .unwrap()
-                .send_message(
-                    "QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string(),
-                    block,
-                    Some(radio_msg.clone()),
-                )
-                .await
-                .unwrap();
-
-            if is_display && MESSAGES.get().unwrap().lock().unwrap().len() > 4 {
-                break;
-            }
-
-            block += 1;
-            sleep(Duration::from_secs(1));
-        }
     }
 }
