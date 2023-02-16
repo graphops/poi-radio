@@ -111,6 +111,7 @@ async fn main() {
         .respond_with(ResponseTemplate::new(200).set_body_string(
             r#"{
                 "data": {
+                  "blockHashFromNumber":"4dbba1ba9fb18b0034965712598be1368edcf91ae2c551d59462aab578dab9c5",
                   "indexingStatuses": [
                     {
                       "subgraph": "QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB",
