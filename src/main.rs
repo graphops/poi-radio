@@ -6,6 +6,7 @@ use graphcast_sdk::graphcast_agent::GraphcastAgent;
 use graphcast_sdk::graphql::client_network::query_network_subgraph;
 use graphcast_sdk::graphql::client_registry::query_registry_indexer;
 use graphcast_sdk::{graphcast_id_address, init_tracing, read_boot_node_addresses};
+use hex::encode;
 use num_bigint::BigUint;
 use num_traits::Zero;
 use poi_radio::{
@@ -13,12 +14,16 @@ use poi_radio::{
     save_local_attestation, Attestation, BlockClock, BlockPointer, LocalAttestationsMap,
     NetworkName, RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES, NETWORKS,
 };
+use rand::{thread_rng, Rng};
+use secp256k1::SecretKey;
 use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, Mutex};
 use std::{thread::sleep, time::Duration};
 use tracing::log::warn;
 use tracing::{debug, error, info};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::graphql::{
     query_graph_node_network_block_hash, query_graph_node_poi, update_network_chainheads,
@@ -34,10 +39,7 @@ async fn main() {
     dotenv().ok();
     init_tracing().expect("Could not set up global default subscriber");
 
-    let graph_node_endpoint =
-        env::var("GRAPH_NODE_STATUS_ENDPOINT").expect("No Graph node status endpoint provided.");
     let private_key = env::var("PRIVATE_KEY").expect("No private key provided.");
-    let eth_node = env::var("ETH_NODE").expect("No ETH URL provided.");
 
     // Subgraph endpoints
     let registry_subgraph =
@@ -54,27 +56,116 @@ async fn main() {
     let wait_block_duration = 2;
 
     let wallet = private_key.parse::<LocalWallet>().unwrap();
-    let radio_name: &str = "poi-radio";
+    let mut rng = thread_rng();
+    let mut private_key = [0u8; 32];
+    rng.fill(&mut private_key[..]);
+
+    let private_key = SecretKey::from_slice(&private_key).expect("Error parsing secret key");
+    let private_key_hex = encode(private_key.secret_bytes());
+    env::set_var("PRIVATE_KEY", &private_key_hex);
+
+    //&(mock_server.uri() + "/graphcast-registry"&(mock_server.uri() + "/graphcast-registry"
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/graphcast-registry"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{
+                "data": {
+                    "indexer": {
+                        "graphcastID": "0x54f4cdc1ac7cd3377f43834fbde09a7ffe6fe337"
+                    }
+                },
+                "errors": null
+            }"#,
+        ))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/network-subgraph"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{
+                "data": {
+                    "indexer" : {
+                        "stakedTokens": "100000000000000000000000",
+                        "allocations": [{
+                            "subgraphDeployment": {
+                                "ipfsHash": "QmbaLc7fEfLGUioKWehRhq838rRzeR8cBoapNJWNSAZE8u"
+                            }
+                        }]
+                    },
+                    "graphNetwork": {
+                        "minimumIndexerStake": "100000000000000000000000"
+                    }
+                },
+                "errors": null
+            }"#,
+        ))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{
+                "data": {
+                  "indexingStatuses": [
+                    {
+                      "subgraph": "QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB",
+                      "synced": true,
+                      "health": "healthy",
+                      "fatalError": null,
+                      "chains": [
+                        {
+                          "network": "mainnet",
+                          "latestBlock": {
+                            "number": "16642243",
+                            "hash": "b30395958a317ccc06da46782f660ce674cbe6792e5573dc630978c506114a0a"
+                          },
+                          "chainHeadBlock": {
+                            "number": "16642243",
+                            "hash": "b30395958a317ccc06da46782f660ce674cbe6792e5573dc630978c506114a0a"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+              "#,
+        ))
+        .mount(&mock_server)
+        .await;
+
+    env::set_var(
+        "GRAPH_NODE_STATUS_ENDPOINT",
+        format!("{}{}", &mock_server.uri(), "/graphql"),
+    );
+
+    let graph_node_endpoint =
+    env::var("GRAPH_NODE_STATUS_ENDPOINT").expect("No Graph node status endpoint provided.");
+
+    let private_key = env::var("PRIVATE_KEY").unwrap();
+    let eth_node = env::var("ETH_NODE").expect("No ETH URL provided.");
+
+    // TODO: Add something random and unique here to avoid noise form other operators
+    let radio_name: &str = "test-poi-radio";
 
     let my_address =
         query_registry_indexer(registry_subgraph.to_string(), graphcast_id_address(&wallet))
             .await
             .ok();
 
-    let topics = if let Some(addr) = my_address.clone() {
-        active_allocation_hashes(&network_subgraph, addr).await.ok()
-    } else {
-        None
-    };
-
     let graphcast_agent = GraphcastAgent::new(
         private_key,
         eth_node,
         radio_name,
-        &registry_subgraph,
-        &network_subgraph,
+        &(mock_server.uri() + "/graphcast-registry"),
+        &(mock_server.uri() + "/network-subgraph"),
         read_boot_node_addresses(),
-        topics,
+        Some(vec!["QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string()]),
         waku_node_key,
         waku_host,
         waku_port,
@@ -138,6 +229,9 @@ async fn main() {
         // The example here combines a single function provided query endpoint, current block info based on the subgraph's indexing network
         // Then the function gets sent to agent for making identifier independent queries
         let identifiers = GRAPHCAST_AGENT.get().unwrap().content_identifiers();
+
+        info!("debugging with style {:?}", subgraph_network_latest_blocks);
+
         for id in identifiers {
             // Get the indexing network of the deployment
             // and update the NETWORK message block
@@ -366,7 +460,7 @@ mod tests {
             &(mock_server.uri() + "/graphcast-registry"),
             &(mock_server.uri() + "/network-subgraph"),
             [].to_vec(),
-            Some(vec!["some-hash".to_string()]),
+            Some(vec!["QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string()]),
             None,
             None,
             None,
@@ -384,7 +478,7 @@ mod tests {
             .unwrap()
             .register_handler(radio_handler)
             .expect("Could not register handler (Should not get here)");
-        let hash = "some-hash".to_string();
+        let hash = "QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string();
         let content = "poi".to_string();
 
         let radio_msg = RadioPayloadMessage::new(hash.clone(), content.clone());
@@ -392,7 +486,7 @@ mod tests {
         GRAPHCAST_AGENT
             .get()
             .unwrap()
-            .send_message("some-hash".to_string(), 0, Some(radio_msg.clone()))
+            .send_message("QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string(), 0, Some(radio_msg.clone()))
             .await
             .unwrap();
 
@@ -404,7 +498,7 @@ mod tests {
             GRAPHCAST_AGENT
                 .get()
                 .unwrap()
-                .send_message("some-hash".to_string(), block, Some(radio_msg.clone()))
+                .send_message("QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB".to_string(), block, Some(radio_msg.clone()))
                 .await
                 .unwrap();
 

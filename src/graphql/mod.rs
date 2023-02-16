@@ -1,7 +1,7 @@
 use graphql_client::{GraphQLQuery, Response};
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::debug;
+use tracing::{debug, info};
 
 use poi_radio::{BlockPointer, NetworkName, SubgraphStatus};
 // Maybe later on move graphql to SDK as the queries are pretty standarded
@@ -187,8 +187,12 @@ pub async fn query_graph_node_network_block_hash(
     };
     let queried_result =
         perform_block_hash_from_number(graph_node_endpoint.clone(), variables).await?;
+
+    info!("queried_result: {:?}", queried_result);
     let response_body: Response<block_hash_from_number::ResponseData> =
         queried_result.json().await?;
+
+    info!("response_body: {:?}", response_body);
 
     if let Some(data) = response_body.data {
         match data.block_hash_from_number {
