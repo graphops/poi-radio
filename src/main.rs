@@ -197,11 +197,24 @@ async fn main() {
                 continue;
             }
 
-            debug!("{} {}", "🔗 Block number:".cyan(), message_block);
+            debug!(
+                "{} {} {} {} {} {} {} {}",
+                "🔗 Message block: ".cyan(),
+                message_block,
+                "🔗 Current block from block clock: ".cyan(),
+                block_clock.current_block,
+                "🔗 Latest block: ".cyan(),
+                latest_block.number,
+                "🔗 Compare block: ".cyan(),
+                block_clock.compare_block
+            );
+
             block_clock.current_block = latest_block.number;
 
-            if latest_block.number == block_clock.compare_block {
+            if block_clock.compare_block != 0 && latest_block.number >= block_clock.compare_block {
                 debug!("{}", "Comparing attestations".magenta());
+
+                debug!("{}{:?}", "Messages: ".magenta(), MESSAGES);
 
                 let remote_attestations = process_messages(
                     Arc::clone(MESSAGES.get().unwrap()),

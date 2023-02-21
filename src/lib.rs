@@ -13,7 +13,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::sync::Mutex as AsyncMutex;
-use tracing::error;
+use tracing::{debug, error};
 
 use graphcast_sdk::{
     graphcast_agent::{
@@ -232,6 +232,7 @@ pub fn attestation_handler() -> impl Fn(Result<GraphcastMessage<RadioPayloadMess
 {
     |msg: Result<GraphcastMessage<RadioPayloadMessage>, anyhow::Error>| match msg {
         Ok(msg) => {
+            debug!("Received message: {:?}", msg);
             MESSAGES.get().unwrap().lock().unwrap().push(msg);
         }
         Err(err) => {
