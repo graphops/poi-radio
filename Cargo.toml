@@ -23,7 +23,7 @@ serde_derive = "1.0.114"
 reqwest = { version = "0.11.0", features = ["json"] }
 ethers = "1.0.0"
 regex = "1.7.1"
-ethers-contract = "1.0.0"
+ethers-contract = "2.0.0"
 ethers-core = "1.0.0"
 ethers-derive-eip712 = "1.0.0"
 colored = "2.0.0"
