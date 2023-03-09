@@ -14,8 +14,8 @@ use num_bigint::BigUint;
 use num_traits::Zero;
 use poi_radio::{
     active_allocation_hashes, attestation_handler, compare_attestations, comparison_trigger,
-    process_messages, save_local_attestation, Attestation, BlockClock, LocalAttestationsMap,
-    RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES,
+    process_messages, save_local_attestation, Attestation, BlockClock, ComparisonResult,
+    LocalAttestationsMap, RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES,
 };
 use std::collections::HashMap;
 use std::env;
@@ -212,7 +212,7 @@ async fn main() {
             )
             .await;
 
-            debug!(
+            info!(
                 "{} {} {} {} {} {} {} {}",
                 "🔗 Message block: ".cyan(),
                 message_block,
@@ -228,7 +228,7 @@ async fn main() {
             block_clock.current_block = latest_block.number;
 
             if Utc::now().timestamp() >= comparison_trigger {
-                debug!("{}", "Comparing attestations");
+                info!("{}", "Comparing attestations");
                 trace!("{}{:?}", "Messages: ", MESSAGES);
 
                 let msgs = MESSAGES.get().unwrap().lock().unwrap().to_vec();
@@ -240,15 +240,16 @@ async fn main() {
                 .await;
                 match remote_attestations {
                     Ok(remote_attestations) => {
-                        match compare_attestations(
+                        let comparison_result = compare_attestations(
                             compare_block,
-                            remote_attestations,
+                            remote_attestations.clone(),
                             Arc::clone(&local_attestations),
                         )
-                        .await
-                        {
-                            Ok(msg) => {
-                                debug!("{}", msg.green().bold());
+                        .await;
+
+                        match comparison_result {
+                            Ok(ComparisonResult::Match(msg)) => {
+                                info!("{}", msg.green().bold());
                                 // Only clear the ones matching identifier and block number
                                 MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
                                     msg.block_number != compare_block
@@ -256,13 +257,24 @@ async fn main() {
                                 });
                                 debug!("Messages left: {:#?}", MESSAGES);
                             }
-                            Err(err) => {
-                                error!("{}", err);
+                            Ok(ComparisonResult::NotFound(m)) => {
+                                warn!("{}", m);
                                 MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
                                     msg.block_number != compare_block
                                         || msg.identifier != id.clone()
                                 });
                                 debug!("Messages left: {:#?}", MESSAGES);
+                            }
+                            Ok(ComparisonResult::Divergent(m)) => {
+                                error!("{}", m);
+                                MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
+                                    msg.block_number != compare_block
+                                        || msg.identifier != id.clone()
+                                });
+                                debug!("Messages left: {:#?}", MESSAGES);
+                            }
+                            Err(e) => {
+                                error!("An error occured while comparing attestations: {}", e);
                             }
                         }
                     }
