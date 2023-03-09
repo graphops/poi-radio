@@ -102,15 +102,14 @@ pub async fn active_allocation_hashes(
     indexer_address: Option<String>,
 ) -> Vec<String> {
     if let Some(addr) = indexer_address {
-        let allocs = query_network_subgraph(network_subgraph.to_string(), addr)
+        query_network_subgraph(network_subgraph.to_string(), addr)
             .await
             .map_err(|e| -> Vec<String> {
                 error!("Topic generation error: {}", e);
                 [].to_vec()
             })
             .unwrap()
-            .indexer_allocations();
-        allocs
+            .indexer_allocations()
     } else {
         [].to_vec()
     }
