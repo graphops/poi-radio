@@ -3,10 +3,15 @@ use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::trace;
 
-use poi_radio::SubgraphStatus;
 // Maybe later on move graphql to SDK as the queries are pretty standarded
 use graphcast_sdk::graphql::QueryError;
 use graphcast_sdk::{BlockPointer, NetworkName};
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SubgraphStatus {
+    pub network: String,
+    pub block: BlockPointer,
+}
 
 /// Derived GraphQL Query to Proof of Indexing
 #[derive(GraphQLQuery, Serialize, Deserialize, Debug)]

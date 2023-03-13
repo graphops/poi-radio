@@ -22,8 +22,9 @@ use graphcast_sdk::{
         GraphcastAgent,
     },
     graphql::{client_network::query_network_subgraph, client_registry::query_registry_indexer},
-    BlockPointer,
 };
+
+pub mod graphql;
 
 #[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize)]
 #[eip712(
@@ -52,12 +53,6 @@ impl RadioPayloadMessage {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct SubgraphStatus {
-    pub network: String,
-    pub block: BlockPointer,
-}
-
 pub struct BlockClock {
     pub current_block: u64,
     pub compare_block: u64,
@@ -65,6 +60,9 @@ pub struct BlockClock {
 
 pub type RemoteAttestationsMap = HashMap<String, HashMap<u64, Vec<Attestation>>>;
 pub type LocalAttestationsMap = HashMap<String, HashMap<u64, Attestation>>;
+
+pub type MessagesVec = OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>>;
+pub type MessagesArc = Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>;
 
 /// A global static (singleton) instance of GraphcastAgent. It is useful to ensure that we have only one GraphcastAgent
 /// per Radio instance, so that we can keep track of state and more easily test our Radio application.

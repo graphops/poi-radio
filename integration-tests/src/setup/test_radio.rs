@@ -1,22 +1,33 @@
+use crate::utils::{
+    empty_attestation_handler, generate_random_address, get_random_port, setup_mock_env_vars,
+    setup_mock_server, RadioRuntimeConfig,
+};
 use chrono::Utc;
 use colored::*;
-use dotenv::dotenv;
 use ethers::signers::LocalWallet;
+use ethers_contract::EthAbiType;
+use ethers_core::types::transaction::eip712::Eip712;
+use ethers_derive_eip712::*;
 /// Radio specific query function to fetch Proof of Indexing for each allocated subgraph
 use graphcast_sdk::graphcast_agent::GraphcastAgent;
 use graphcast_sdk::graphql::client_network::query_network_subgraph;
 use graphcast_sdk::graphql::client_registry::query_registry_indexer;
 use graphcast_sdk::{
-    graphcast_id_address, init_tracing, read_boot_node_addresses, BlockPointer, NetworkName,
-    NETWORKS,
+    graphcast_id_address, read_boot_node_addresses, BlockPointer, NetworkName, NETWORKS,
 };
+use hex::encode;
 use num_bigint::BigUint;
 use num_traits::Zero;
+use partial_application::partial;
 use poi_radio::{
-    active_allocation_hashes, attestation_handler, compare_attestations, comparison_trigger,
-    process_messages, save_local_attestation, Attestation, BlockClock, ComparisonResult,
-    LocalAttestationsMap, RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES,
+    attestation_handler, compare_attestations, comparison_trigger, process_messages,
+    save_local_attestation, Attestation, BlockClock, ComparisonResult, LocalAttestationsMap,
+    MessagesArc, RadioPayloadMessage, RemoteAttestationsMap, GRAPHCAST_AGENT, MESSAGES,
 };
+use prost::Message;
+use rand::{thread_rng, Rng};
+use secp256k1::SecretKey;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, Mutex as SyncMutex};
@@ -25,50 +36,107 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::log::warn;
 use tracing::{debug, error, info, trace};
 
-use crate::graphql::{query_graph_node_poi, update_network_chainheads};
+use crate::setup::constants::{MOCK_SUBGRAPH_GOERLI, MOCK_SUBGRAPH_MAINNET};
+use poi_radio::graphql::{query_graph_node_poi, update_network_chainheads, SubgraphStatus};
 
-mod graphql;
+fn round_to_nearest(number: i64) -> i64 {
+    (number / 10) * 10 + if number % 10 > 4 { 10 } else { 0 }
+}
 
-#[macro_use]
-extern crate partial_application;
+#[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize)]
+#[eip712(
+    name = "Graphcast POI Radio Dummy Msg",
+    version = "0",
+    chain_id = 1,
+    verifying_contract = "0xc944e90c64b2c07662a292be6244bdf05cda44a7"
+)]
+pub struct DummyMsg {
+    #[prost(string, tag = "1")]
+    pub identifier: String,
+    #[prost(int32, tag = "2")]
+    pub dummy_value: i32,
+}
 
-#[tokio::main]
-async fn main() {
-    dotenv().ok();
-    init_tracing().expect("Could not set up global default subscriber");
+impl DummyMsg {
+    pub fn new(identifier: String, dummy_value: i32) -> Self {
+        DummyMsg {
+            identifier,
+            dummy_value,
+        }
+    }
+}
 
+pub async fn run_test_radio<S, A, P>(
+    config: &RadioRuntimeConfig,
+    success_handler: S,
+    test_attestation_handler: A,
+    post_comparison_handler: P,
+) where
+    S: Fn(MessagesArc),
+    A: Fn(u64, &RemoteAttestationsMap, &LocalAttestationsMap),
+    P: Fn(MessagesArc, u64, &str, usize),
+{
+    let collect_message_duration: i64 = env::var("COLLECT_MESSAGE_DURATION")
+        .unwrap_or("1".to_string())
+        .parse::<i64>()
+        .unwrap_or(1);
+
+    let mut block_number = 0;
+    let indexer_address = config
+        .indexer_address
+        .clone()
+        .unwrap_or(generate_random_address());
+
+    let graphcast_id = config
+        .operator_address
+        .clone()
+        .unwrap_or(generate_random_address());
+
+    debug!("Actual graphcast_id: {}", graphcast_id);
+
+    let mock_server_uri = setup_mock_server(
+        round_to_nearest(Utc::now().timestamp()).try_into().unwrap(),
+        &indexer_address,
+        &graphcast_id,
+        &config.subgraphs.clone().unwrap_or(vec![
+            MOCK_SUBGRAPH_MAINNET.to_string(),
+            MOCK_SUBGRAPH_GOERLI.to_string(),
+        ]),
+        &config.indexer_stake,
+        &config.poi,
+    )
+    .await;
+    setup_mock_env_vars(&mock_server_uri);
+
+    let private_key = env::var("PRIVATE_KEY").expect("No private key provided.");
+    let registry_subgraph =
+        env::var("REGISTRY_SUBGRAPH_ENDPOINT").expect("No registry subgraph endpoint provided.");
+    let network_subgraph =
+        env::var("NETWORK_SUBGRAPH_ENDPOINT").expect("No network subgraph endpoint provided.");
     let graph_node_endpoint =
         env::var("GRAPH_NODE_STATUS_ENDPOINT").expect("No Graph node status endpoint provided.");
-    let private_key = env::var("PRIVATE_KEY").expect("No private key provided.");
 
-    // Subgraph endpoints
-    let registry_subgraph =
-        env::var("REGISTRY_SUBGRAPH").expect("No registry subgraph endpoint provided.");
-    let network_subgraph =
-        env::var("NETWORK_SUBGRAPH").expect("No network subgraph endpoint provided.");
-    let graphcast_network = env::var("GRAPHCAST_NETWORK").ok();
-
-    // Configure the amount of time in seconds spent collecting messages before attesting
-    let collect_message_duration: i64 = env::var("COLLECT_MESSAGE_DURATION")
-        .unwrap_or("30".to_string())
-        .parse::<i64>()
-        .unwrap_or(30);
-
-    // Option for where to host the waku node instance
-    let waku_host = env::var("WAKU_HOST").ok();
-    let waku_port = env::var("WAKU_PORT").ok();
-    let waku_node_key = env::var("WAKU_NODE_KEY").ok();
+    // Send message every x blocks for which wait y blocks before attestations
+    let wait_block_duration = 2;
 
     let wallet = private_key.parse::<LocalWallet>().unwrap();
-    let radio_name: &str = "poi-radio";
+    let mut rng = thread_rng();
+    let mut private_key = [0u8; 32];
+    rng.fill(&mut private_key[..]);
+
+    let private_key = SecretKey::from_slice(&private_key).expect("Error parsing secret key");
+    let private_key_hex = encode(private_key.secret_bytes());
+    env::set_var("PRIVATE_KEY", &private_key_hex);
+
+    let private_key = env::var("PRIVATE_KEY").unwrap();
+
+    // TODO: Add something random and unique here to avoid noise form other operators
+    let radio_name: &str = "test-poi-radio";
 
     let my_address =
         query_registry_indexer(registry_subgraph.to_string(), graphcast_id_address(&wallet))
             .await
             .ok();
-
-    let topics_query = partial!(active_allocation_hashes => &network_subgraph, my_address.clone());
-    let topics = topics_query().await;
 
     let graphcast_agent = GraphcastAgent::new(
         private_key,
@@ -77,11 +145,14 @@ async fn main() {
         &network_subgraph,
         &graph_node_endpoint,
         read_boot_node_addresses(),
-        graphcast_network.as_deref(),
-        topics,
-        waku_node_key,
-        waku_host,
-        waku_port,
+        Some("5"),
+        config.subgraphs.clone().unwrap_or(vec![
+            MOCK_SUBGRAPH_MAINNET.to_string(),
+            MOCK_SUBGRAPH_GOERLI.to_string(),
+        ]),
+        None,
+        None,
+        Some(get_random_port()),
         None,
     )
     .await
@@ -90,11 +161,19 @@ async fn main() {
     _ = GRAPHCAST_AGENT.set(graphcast_agent);
     _ = MESSAGES.set(Arc::new(SyncMutex::new(vec![])));
 
-    GRAPHCAST_AGENT
-        .get()
-        .unwrap()
-        .register_handler(Arc::new(AsyncMutex::new(attestation_handler())))
-        .expect("Could not register handler");
+    if config.is_setup_instance {
+        GRAPHCAST_AGENT
+            .get()
+            .unwrap()
+            .register_handler(Arc::new(AsyncMutex::new(empty_attestation_handler())))
+            .expect("Could not register handler");
+    } else {
+        GRAPHCAST_AGENT
+            .get()
+            .unwrap()
+            .register_handler(Arc::new(AsyncMutex::new(attestation_handler())))
+            .expect("Could not register handler");
+    };
 
     let mut block_store: HashMap<NetworkName, BlockClock> = HashMap::new();
     let mut network_chainhead_blocks: HashMap<NetworkName, BlockPointer> = HashMap::new();
@@ -117,32 +196,24 @@ async fn main() {
     // Main loop for sending messages, can factor out
     // and take radio specific query and parsing for radioPayload
     loop {
-        // Update topic subscription
-        if Utc::now().timestamp() % 120 == 0 {
-            GRAPHCAST_AGENT
-                .get()
-                .unwrap()
-                .update_content_topics(topics_query().await)
-                .await;
-        }
         // Update all the chainheads of the network
         // Also get a hash map returned on the subgraph mapped to network name and latest block
-        let subgraph_network_latest_blocks = match update_network_chainheads(
-            graph_node_endpoint.clone(),
-            &mut network_chainhead_blocks,
-        )
-        .await
-        {
-            Ok(res) => res,
-            Err(e) => {
-                error!("Could not query indexing statuses, pull again later: {e}");
-                continue;
-            }
-        };
-        trace!(
+        let subgraph_network_latest_blocks: HashMap<String, SubgraphStatus> =
+            match update_network_chainheads(
+                graph_node_endpoint.clone(),
+                &mut network_chainhead_blocks,
+            )
+            .await
+            {
+                Ok(res) => res,
+                Err(e) => {
+                    error!("Could not query indexing statuses, pull again later: {e}");
+                    continue;
+                }
+            };
+        debug!(
             "Subgraph network and latest blocks: {:#?}\nNetwork chainhead: {:#?}",
-            subgraph_network_latest_blocks,
-            network_chainhead_blocks
+            subgraph_network_latest_blocks, network_chainhead_blocks
         );
         //TODO: check that if no networks had an new message update blocks, sleep for a few seconds and 'continue'
 
@@ -151,6 +222,9 @@ async fn main() {
         // The example here combines a single function provided query endpoint, current block info based on the subgraph's indexing network
         // Then the function gets sent to agent for making identifier independent queries
         let identifiers = GRAPHCAST_AGENT.get().unwrap().content_identifiers().await;
+
+        info!("Latest blocks {:?}", subgraph_network_latest_blocks);
+
         for id in identifiers {
             // Get the indexing network of the deployment
             // and update the NETWORK message block
@@ -212,7 +286,7 @@ async fn main() {
             )
             .await;
 
-            info!(
+            debug!(
                 "{} {} {} {} {} {} {} {}",
                 "🔗 Message block: ".cyan(),
                 message_block,
@@ -221,14 +295,21 @@ async fn main() {
                 "🔗 Latest block: ".cyan(),
                 latest_block.number,
                 "🔗 Compare block: ".cyan(),
-                compare_block
+                block_clock.compare_block
             );
 
-            // Update block clock
             block_clock.current_block = latest_block.number;
 
+            debug!(
+                "{} {} {} {}",
+                "🔗 utc now: ".cyan(),
+                Utc::now().timestamp(),
+                "🔗 comparison trigger: ".cyan(),
+                comparison_trigger,
+            );
+
             if Utc::now().timestamp() >= comparison_trigger {
-                info!("{}", "Comparing attestations");
+                debug!("{}", "Comparing attestations");
                 trace!("{}{:?}", "Messages: ", MESSAGES);
 
                 let msgs = MESSAGES.get().unwrap().lock().unwrap().to_vec();
@@ -240,41 +321,60 @@ async fn main() {
                 .await;
                 match remote_attestations {
                     Ok(remote_attestations) => {
-                        let comparison_result = compare_attestations(
+                        success_handler(Arc::clone(MESSAGES.get().unwrap()));
+                        test_attestation_handler(
+                            block_clock.compare_block - wait_block_duration,
+                            &remote_attestations,
+                            &local_attestations.lock().await.clone(),
+                        );
+
+                        match compare_attestations(
                             compare_block,
-                            remote_attestations.clone(),
+                            remote_attestations,
                             Arc::clone(&local_attestations),
                         )
-                        .await;
-
-                        match comparison_result {
+                        .await
+                        {
                             Ok(ComparisonResult::Match(msg)) => {
-                                info!("{}", msg.green().bold());
-                                // Only clear the ones matching identifier and block number
+                                debug!("{}", msg.green().bold());
+                                let len = MESSAGES.get().unwrap().lock().unwrap().to_vec().len();
                                 MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
                                     msg.block_number != compare_block
                                         || msg.identifier != id.clone()
                                 });
                                 debug!("Messages left: {:#?}", MESSAGES);
+                                post_comparison_handler(
+                                    Arc::clone(MESSAGES.get().unwrap()),
+                                    compare_block,
+                                    &id,
+                                    len,
+                                );
                             }
-                            Ok(ComparisonResult::NotFound(m)) => {
-                                warn!("{}", m);
-                                MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
-                                    msg.block_number != compare_block
-                                        || msg.identifier != id.clone()
-                                });
-                                debug!("Messages left: {:#?}", MESSAGES);
+                            Ok(ComparisonResult::Divergent(err)) => {
+                                if config.panic_if_poi_diverged {
+                                    panic!("{}", err);
+                                } else {
+                                    let len =
+                                        MESSAGES.get().unwrap().lock().unwrap().to_vec().len();
+                                    MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
+                                        msg.block_number != compare_block
+                                            || msg.identifier != id.clone()
+                                    });
+                                    debug!("Messages left: {:#?}", MESSAGES);
+                                    error!("{}", err);
+                                    post_comparison_handler(
+                                        Arc::clone(MESSAGES.get().unwrap()),
+                                        compare_block,
+                                        &id,
+                                        len,
+                                    );
+                                }
                             }
-                            Ok(ComparisonResult::Divergent(m)) => {
-                                error!("{}", m);
-                                MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
-                                    msg.block_number != compare_block
-                                        || msg.identifier != id.clone()
-                                });
-                                debug!("Messages left: {:#?}", MESSAGES);
+                            Ok(ComparisonResult::NotFound(msg)) => {
+                                info!("Not found: {}", msg);
                             }
-                            Err(e) => {
-                                error!("An error occured while comparing attestations: {}", e);
+                            Err(err) => {
+                                error!("{}", err);
                             }
                         }
                     }
@@ -296,6 +396,7 @@ async fn main() {
                 latest_block.number
             );
             if latest_block.number >= message_block {
+                block_clock.compare_block = message_block + wait_block_duration;
                 let block_hash = match GRAPHCAST_AGENT
                     .get()
                     .unwrap()
@@ -308,6 +409,31 @@ async fn main() {
                         continue;
                     }
                 };
+
+                if config.invalid_payload {
+                    // Send dummy msg
+                    debug!("Sending dummy message");
+                    let radio_message = DummyMsg::new(id.clone(), 5);
+                    info!(
+                        "{}: {:?}",
+                        "Attempting to send message".magenta(),
+                        radio_message
+                    );
+
+                    match GRAPHCAST_AGENT
+                        .get()
+                        .unwrap()
+                        .send_message(id.clone(), network_name, message_block, Some(radio_message))
+                        .await
+                    {
+                        Ok(sent) => {
+                            info!("{}: {}", "Sent message id".green(), sent);
+                        }
+                        Err(e) => error!("{}: {}", "Failed to send message".red(), e),
+                    };
+
+                    continue;
+                }
 
                 match poi_query(block_hash.clone(), message_block.try_into().unwrap()).await {
                     Ok(content) => {
@@ -325,6 +451,12 @@ async fn main() {
                         );
 
                         let radio_message = RadioPayloadMessage::new(id.clone(), content.clone());
+                        info!(
+                            "{}: {:?}",
+                            "Attempting to send message".magenta(),
+                            radio_message
+                        );
+
                         match GRAPHCAST_AGENT
                             .get()
                             .unwrap()
@@ -336,7 +468,9 @@ async fn main() {
                             )
                             .await
                         {
-                            Ok(sent) => info!("{}: {}", "Sent message id".green(), sent),
+                            Ok(sent) => {
+                                info!("{}: {}", "Sent message id".green(), sent);
+                            }
                             Err(e) => error!("{}: {}", "Failed to send message".red(), e),
                         };
                     }
@@ -345,6 +479,24 @@ async fn main() {
             }
         }
 
+        if block_number < 20 {
+            block_number += 1;
+        } else {
+            block_number = 0;
+            MESSAGES.get().unwrap().lock().unwrap().clear()
+        }
+        setup_mock_server(
+            round_to_nearest(Utc::now().timestamp()).try_into().unwrap(),
+            &indexer_address,
+            &graphcast_id,
+            &config.subgraphs.clone().unwrap_or(vec![
+                MOCK_SUBGRAPH_MAINNET.to_string(),
+                MOCK_SUBGRAPH_GOERLI.to_string(),
+            ]),
+            &config.indexer_stake,
+            &config.poi,
+        )
+        .await;
         sleep(Duration::from_secs(5));
         continue;
     }
