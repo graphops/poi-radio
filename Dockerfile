@@ -1,4 +1,4 @@
-FROM debian:latest
+FROM rust:1-bullseye AS build-image
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -14,15 +14,21 @@ RUN apt-get update \
 
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o rustup-init.sh \
-&& sh rustup-init.sh -y --default-toolchain stable --no-modify-path
-ENV PATH="/root/.cargo/bin:${PATH}" 
-
 COPY . /poi-radio
 WORKDIR /poi-radio
 
 RUN sh install-golang.sh
 ENV PATH=$PATH:/usr/local/go/bin
 
-RUN cargo build
-CMD ["cargo", "run"]
+RUN cargo build --release
+
+FROM debian:bullseye-slim AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libpq-dev \
+        pkg-config \
+        libssl-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build-image "/poi-radio/target/release/poi-radio" "/usr/bin/local/poi-radio"
+ENTRYPOINT [ "/usr/bin/local/poi-radio" ]
