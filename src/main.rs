@@ -110,7 +110,7 @@ async fn main() {
         BigUint::zero()
     };
     info!(
-        "Acting on behave of indexer {:#?} with stake {}",
+        "Acting on behalf of indexer {:#?} with stake {}",
         my_address, my_stake
     );
 
