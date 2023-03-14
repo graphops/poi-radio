@@ -3,29 +3,30 @@ use colored::*;
 use dotenv::dotenv;
 use ethers::signers::LocalWallet;
 /// Radio specific query function to fetch Proof of Indexing for each allocated subgraph
+use graphcast_sdk::config::{Config, NetworkName, NETWORKS};
 use graphcast_sdk::graphcast_agent::GraphcastAgent;
+use graphcast_sdk::graphql::client_graph_node::update_chainhead_blocks;
 use graphcast_sdk::graphql::client_network::query_network_subgraph;
 use graphcast_sdk::graphql::client_registry::query_registry_indexer;
 use graphcast_sdk::{
-    graphcast_id_address, init_tracing, read_boot_node_addresses, BlockPointer, NetworkName,
-    NETWORKS,
+    comparison_trigger, graphcast_id_address, init_tracing, read_boot_node_addresses, BlockClock,
+    BlockPointer,
 };
 use num_bigint::BigUint;
 use num_traits::Zero;
 use poi_radio::{
-    active_allocation_hashes, attestation_handler, compare_attestations, comparison_trigger,
-    process_messages, save_local_attestation, Attestation, BlockClock, ComparisonResult,
-    LocalAttestationsMap, RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES,
+    attestation_handler, compare_attestations, generate_topics, process_messages,
+    save_local_attestation, Attestation, ComparisonResult, LocalAttestationsMap,
+    RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES,
 };
 use std::collections::HashMap;
-use std::env;
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::{thread::sleep, time::Duration};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::log::warn;
 use tracing::{debug, error, info, trace};
 
-use crate::graphql::{query_graph_node_poi, update_network_chainheads};
+use crate::graphql::query_graph_node_poi;
 
 mod graphql;
 
@@ -34,58 +35,49 @@ extern crate partial_application;
 
 #[tokio::main]
 async fn main() {
+    let radio_name: &str = "poi-radio";
     dotenv().ok();
+
+    // Parse basic configurations
+    let config = Config::args();
     init_tracing().expect("Could not set up global default subscriber");
 
-    let graph_node_endpoint =
-        env::var("GRAPH_NODE_STATUS_ENDPOINT").expect("No Graph node status endpoint provided.");
-    let private_key = env::var("PRIVATE_KEY").expect("No private key provided.");
-
-    // Subgraph endpoints
-    let registry_subgraph =
-        env::var("REGISTRY_SUBGRAPH").expect("No registry subgraph endpoint provided.");
-    let network_subgraph =
-        env::var("NETWORK_SUBGRAPH").expect("No network subgraph endpoint provided.");
-    let graphcast_network = env::var("GRAPHCAST_NETWORK").ok();
-
-    // Configure the amount of time in seconds spent collecting messages before attesting
-    let collect_message_duration: i64 = env::var("COLLECT_MESSAGE_DURATION")
-        .unwrap_or("30".to_string())
-        .parse::<i64>()
-        .unwrap_or(30);
-
-    // Option for where to host the waku node instance
-    let waku_host = env::var("WAKU_HOST").ok();
-    let waku_port = env::var("WAKU_PORT").ok();
-    let waku_node_key = env::var("WAKU_NODE_KEY").ok();
+    let graph_node_endpoint = config.graph_node_endpoint.clone();
+    let private_key = config.private_key.clone();
 
     let wallet = private_key.parse::<LocalWallet>().unwrap();
-    let radio_name: &str = "poi-radio";
 
     let my_address =
-        query_registry_indexer(registry_subgraph.to_string(), graphcast_id_address(&wallet))
-            .await
+        // query_registry_indexer(config.registry_subgraph.to_string(), String::from("0xf22447cf1c0186ceaa8489b1b48435341a9a6528"))
+        query_registry_indexer(config.registry_subgraph.to_string(), graphcast_id_address(&wallet))
+            .await.map_err(|e|
+            {
+                warn!("Registry query error: {e}");
+                e
+            })
             .ok();
 
-    let topics_query = partial!(active_allocation_hashes => &network_subgraph, my_address.clone());
-    let topics = topics_query().await;
+    let generate_topics = partial!(generate_topics => config.network_subgraph.clone(), my_address.clone(), &config.topics);
+    let topics = generate_topics().await;
 
+    debug!("Initializing the Graphcast Agent");
     let graphcast_agent = GraphcastAgent::new(
-        private_key,
+        config.private_key.clone(),
         radio_name,
-        &registry_subgraph,
-        &network_subgraph,
+        &config.registry_subgraph,
+        &config.network_subgraph,
         &graph_node_endpoint,
-        read_boot_node_addresses(),
-        graphcast_network.as_deref(),
+        read_boot_node_addresses(config.boot_node_addresses.clone()),
+        Some(&config.graphcast_network),
         topics,
-        waku_node_key,
-        waku_host,
-        waku_port,
+        // Maybe move Waku specific configs to a sub-group
+        config.waku_node_key.clone(),
+        config.waku_host.clone(),
+        config.waku_port.clone(),
         None,
     )
     .await
-    .unwrap();
+    .expect("Initialize Graphcast agent");
 
     _ = GRAPHCAST_AGENT.set(graphcast_agent);
     _ = MESSAGES.set(Arc::new(SyncMutex::new(vec![])));
@@ -102,7 +94,7 @@ async fn main() {
         Arc::new(AsyncMutex::new(HashMap::new()));
 
     let my_stake = if let Some(addr) = my_address.clone() {
-        query_network_subgraph(network_subgraph.to_string(), addr)
+        query_network_subgraph(config.network_subgraph.to_string(), addr)
             .await
             .unwrap()
             .indexer_stake()
@@ -122,12 +114,12 @@ async fn main() {
             GRAPHCAST_AGENT
                 .get()
                 .unwrap()
-                .update_content_topics(topics_query().await)
+                .update_content_topics(generate_topics().await)
                 .await;
         }
         // Update all the chainheads of the network
         // Also get a hash map returned on the subgraph mapped to network name and latest block
-        let subgraph_network_latest_blocks = match update_network_chainheads(
+        let subgraph_network_latest_blocks = match update_chainhead_blocks(
             graph_node_endpoint.clone(),
             &mut network_chainhead_blocks,
         )
@@ -208,7 +200,7 @@ async fn main() {
             let (compare_block, comparison_trigger) = comparison_trigger(
                 Arc::new(AsyncMutex::new(msgs)),
                 id.clone(),
-                collect_message_duration,
+                config.collect_message_duration,
             )
             .await;
 
@@ -234,8 +226,8 @@ async fn main() {
                 let msgs = MESSAGES.get().unwrap().lock().unwrap().to_vec();
                 let remote_attestations = process_messages(
                     Arc::new(AsyncMutex::new(msgs)),
-                    &registry_subgraph,
-                    &network_subgraph,
+                    &config.registry_subgraph,
+                    &config.network_subgraph,
                 )
                 .await;
                 match remote_attestations {
@@ -356,6 +348,7 @@ mod tests {
     use hex::encode;
     use rand::{thread_rng, Rng};
     use secp256k1::SecretKey;
+    use std::env;
     use std::sync::{Arc, Mutex as SyncMutex};
     use tokio::sync::Mutex as AsyncMutex;
     use wiremock::matchers::{method, path};

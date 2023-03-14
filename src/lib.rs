@@ -22,7 +22,6 @@ use graphcast_sdk::{
         GraphcastAgent,
     },
     graphql::{client_network::query_network_subgraph, client_registry::query_registry_indexer},
-    BlockPointer,
 };
 
 #[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize)]
@@ -50,17 +49,6 @@ impl RadioPayloadMessage {
     pub fn payload_content(&self) -> String {
         self.content.clone()
     }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct SubgraphStatus {
-    pub network: String,
-    pub block: BlockPointer,
-}
-
-pub struct BlockClock {
-    pub current_block: u64,
-    pub compare_block: u64,
 }
 
 pub type RemoteAttestationsMap = HashMap<String, HashMap<u64, Vec<Attestation>>>;
@@ -115,24 +103,19 @@ pub async fn active_allocation_hashes(
     }
 }
 
-/// The function filters for the first message of a particular identifier by block number
-/// get the timestamp it was received from and add the collection duration to
-/// return the time for which message comparisons should be triggered
-pub async fn comparison_trigger(
-    messages: Arc<AsyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>,
-    identifier: String,
-    collect_duration: i64,
-) -> (u64, i64) {
-    let messages = AsyncMutex::new(messages.lock().await);
-    let msgs = messages.lock().await;
-    let matched_msgs = msgs
-        .iter()
-        .filter(|message| message.identifier == identifier);
-    let msg_trigger_time = matched_msgs
-        .min_by_key(|msg| (msg.block_number, msg.nonce))
-        .map(|message| (message.block_number, message.nonce + collect_duration));
-
-    msg_trigger_time.unwrap_or((0, i64::MAX))
+/// Generate default topics along with given static topics
+pub async fn generate_topics(
+    network_subgraph: String,
+    indexer_address: Option<String>,
+    static_topics: &Vec<String>,
+) -> Vec<String> {
+    let mut topics = active_allocation_hashes(&network_subgraph, indexer_address).await;
+    for topic in static_topics {
+        if !topics.contains(topic) {
+            topics.push(topic.clone());
+        }
+    }
+    topics
 }
 
 /// This function processes the global messages map that we populate when
@@ -267,9 +250,9 @@ pub enum ComparisonResult {
 impl Display for ComparisonResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ComparisonResult::NotFound(s) => write!(f, "NotFound: {}", s),
-            ComparisonResult::Divergent(s) => write!(f, "Divergent: {}", s),
-            ComparisonResult::Match(s) => write!(f, "Matched: {}", s),
+            ComparisonResult::NotFound(s) => write!(f, "NotFound: {s}"),
+            ComparisonResult::Divergent(s) => write!(f, "Divergent: {s}"),
+            ComparisonResult::Match(s) => write!(f, "Matched: {s}"),
         }
     }
 }
@@ -297,8 +280,7 @@ pub async fn compare_attestations(
         Some(attestations) => attestations,
         None => {
             return Ok(ComparisonResult::NotFound(format!(
-                "No local attestation found for block {}",
-                attestation_block
+                "No local attestation found for block {attestation_block}"
             )))
         }
     };
@@ -307,8 +289,7 @@ pub async fn compare_attestations(
         Some(blocks) => blocks,
         None => {
             return Ok(ComparisonResult::NotFound(format!(
-                "No remote attestation found for subgraph {}",
-                ipfs_hash
+                "No remote attestation found for subgraph {ipfs_hash}"
             )))
         }
     };
@@ -316,8 +297,7 @@ pub async fn compare_attestations(
         Some(attestations) => attestations,
         None => {
             return Ok(ComparisonResult::NotFound(format!(
-                "No remote attestation found for subgraph {} on block {}",
-                ipfs_hash, attestation_block
+                "No remote attestation found for subgraph {ipfs_hash} on block {attestation_block}"
             )))
         }
     };
@@ -340,20 +320,18 @@ pub async fn compare_attestations(
     let most_attested_npoi = &remote_attestations.last().unwrap().npoi;
     if most_attested_npoi == &local_attestation.npoi {
         Ok(ComparisonResult::Match(format!(
-            "POIs match for subgraph {} on block {}!: {}",
-            ipfs_hash, attestation_block, most_attested_npoi
+            "POIs match for subgraph {ipfs_hash} on block {attestation_block}!: {most_attested_npoi}"
         )))
     } else {
         Ok(ComparisonResult::Divergent(format!(
-            "POIs don't match for subgraph {} on block {}!",
-            ipfs_hash, attestation_block
+            "POIs don't match for subgraph {ipfs_hash} on block {attestation_block}!"
         )))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use graphcast_sdk::NetworkName;
+    use graphcast_sdk::config::NetworkName;
     use num_traits::One;
 
     use super::*;

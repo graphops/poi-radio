@@ -10,7 +10,8 @@ keywords=["graphprotocol", "data-integrity", "Indexer", "waku", "p2p"]
 categories=["network-programming", "web-programming::http-client"]
 
 [dependencies]
-graphcast-sdk = "0.0.12"
+# graphcast-sdk = { path = "../graphcast-rs"}
+graphcast-sdk = { git = "https://github.com/graphops/graphcast-sdk", rev = "7e16481" }
 prost = "0.11"
 once_cell = "1.15"
 chrono = "0.4"
@@ -21,11 +22,11 @@ anyhow = "1.0.69"
 graphql_client = "0.9.0"
 serde_derive = "1.0.114"
 reqwest = { version = "0.11.0", features = ["json"] }
-ethers = "1.0.0"
+ethers = "2.0.0"
 regex = "1.7.1"
-ethers-contract = "1.0.0"
-ethers-core = "1.0.0"
-ethers-derive-eip712 = "1.0.0"
+ethers-contract = "2.0.0"
+ethers-core = "2.0.0"
+ethers-derive-eip712 = "2.0.0"
 colored = "2.0.0"
 partial_application = "0.2.1"
 num-bigint = "0.4.3"
