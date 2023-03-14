@@ -28,6 +28,7 @@ RUN apt-get update \
         libpq-dev \
         pkg-config \
         libssl-dev \
+        ca-certificates \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build-image "/poi-radio/target/release/poi-radio" "/usr/bin/local/poi-radio"
