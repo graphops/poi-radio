@@ -11,7 +11,7 @@ categories=["network-programming", "web-programming::http-client"]
 
 [dependencies]
 # graphcast-sdk = { path = "../graphcast-rs"}
-graphcast-sdk = { git = "https://github.com/graphops/graphcast-sdk", rev = "7e16481" }
+graphcast-sdk = { git = "https://github.com/graphops/graphcast-sdk", rev = "55076ee" }
 prost = "0.11"
 once_cell = "1.15"
 chrono = "0.4"
@@ -27,7 +27,6 @@ regex = "1.7.1"
 ethers-contract = "2.0.0"
 ethers-core = "2.0.0"
 ethers-derive-eip712 = "2.0.0"
-colored = "2.0.0"
 partial_application = "0.2.1"
 num-bigint = "0.4.3"
 num-traits = "0.2.15"

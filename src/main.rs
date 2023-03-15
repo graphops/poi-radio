@@ -1,22 +1,21 @@
 use chrono::Utc;
-use colored::*;
+
 use dotenv::dotenv;
 use ethers::signers::LocalWallet;
 /// Radio specific query function to fetch Proof of Indexing for each allocated subgraph
-use graphcast_sdk::config::{Config, NetworkName, NETWORKS};
+use graphcast_sdk::config::{Config, NetworkName};
+use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
 use graphcast_sdk::graphcast_agent::GraphcastAgent;
 use graphcast_sdk::graphql::client_graph_node::update_chainhead_blocks;
 use graphcast_sdk::graphql::client_network::query_network_subgraph;
 use graphcast_sdk::graphql::client_registry::query_registry_indexer;
 use graphcast_sdk::{
-    comparison_trigger, graphcast_id_address, init_tracing, read_boot_node_addresses, BlockClock,
-    BlockPointer,
+    comparison_trigger, determine_message_block, graphcast_id_address, BlockPointer,
 };
-use num_bigint::BigUint;
-use num_traits::Zero;
+
 use poi_radio::{
-    attestation_handler, compare_attestations, generate_topics, process_messages,
-    save_local_attestation, Attestation, ComparisonResult, LocalAttestationsMap,
+    attestation_handler, chainhead_block_str, compare_attestations, generate_topics,
+    process_messages, save_local_attestation, Attestation, ComparisonResult, LocalAttestationsMap,
     RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES,
 };
 use std::collections::HashMap;
@@ -24,7 +23,7 @@ use std::sync::{Arc, Mutex as SyncMutex};
 use std::{thread::sleep, time::Duration};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::log::warn;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 use crate::graphql::query_graph_node_poi;
 
@@ -40,25 +39,36 @@ async fn main() {
 
     // Parse basic configurations
     let config = Config::args();
-    init_tracing().expect("Could not set up global default subscriber");
+    if let Err(e) = config.validate_set_up().await {
+        panic!("Could not validate the supplied configurations: {e}")
+    }
 
     let graph_node_endpoint = config.graph_node_endpoint.clone();
     let private_key = config.private_key.clone();
-
     let wallet = private_key.parse::<LocalWallet>().unwrap();
 
-    let my_address =
-        // query_registry_indexer(config.registry_subgraph.to_string(), String::from("0xf22447cf1c0186ceaa8489b1b48435341a9a6528"))
-        query_registry_indexer(config.registry_subgraph.to_string(), graphcast_id_address(&wallet))
-            .await.map_err(|e|
-            {
-                warn!("Registry query error: {e}");
-                e
-            })
-            .ok();
+    // Using unwrap directly as the query has been ran in the set-up validation
+    // The query here must be Ok but so it is okay to panic here
+    // Alternatively, make validate_set_up to return these two fields
+    let my_address = query_registry_indexer(
+        config.registry_subgraph.to_string(),
+        graphcast_id_address(&wallet),
+    )
+    .await
+    .unwrap();
+    let my_stake = query_network_subgraph(config.network_subgraph.to_string(), my_address.clone())
+        .await
+        .unwrap()
+        .indexer_stake();
+    info!(
+        "Initializing radio to act on behalf of indexer {:#?} with stake {}",
+        my_address.clone(),
+        my_stake
+    );
 
     let generate_topics = partial!(generate_topics => config.network_subgraph.clone(), my_address.clone(), &config.topics);
     let topics = generate_topics().await;
+    info!("Found content topics for subscription: {:?}", topics);
 
     debug!("Initializing the Graphcast Agent");
     let graphcast_agent = GraphcastAgent::new(
@@ -67,7 +77,7 @@ async fn main() {
         &config.registry_subgraph,
         &config.network_subgraph,
         &graph_node_endpoint,
-        read_boot_node_addresses(config.boot_node_addresses.clone()),
+        config.boot_node_addresses.clone(),
         Some(&config.graphcast_network),
         topics,
         // Maybe move Waku specific configs to a sub-group
@@ -88,23 +98,9 @@ async fn main() {
         .register_handler(Arc::new(AsyncMutex::new(attestation_handler())))
         .expect("Could not register handler");
 
-    let mut block_store: HashMap<NetworkName, BlockClock> = HashMap::new();
     let mut network_chainhead_blocks: HashMap<NetworkName, BlockPointer> = HashMap::new();
     let local_attestations: Arc<AsyncMutex<LocalAttestationsMap>> =
         Arc::new(AsyncMutex::new(HashMap::new()));
-
-    let my_stake = if let Some(addr) = my_address.clone() {
-        query_network_subgraph(config.network_subgraph.to_string(), addr)
-            .await
-            .unwrap()
-            .indexer_stake()
-    } else {
-        BigUint::zero()
-    };
-    info!(
-        "Acting on behalf of indexer {:#?} with stake {}",
-        my_address, my_stake
-    );
 
     // Main loop for sending messages, can factor out
     // and take radio specific query and parsing for radioPayload
@@ -131,10 +127,10 @@ async fn main() {
                 continue;
             }
         };
-        trace!(
-            "Subgraph network and latest blocks: {:#?}\nNetwork chainhead: {:#?}",
+
+        debug!(
+            "Subgraph network and latest blocks: {:#?}",
             subgraph_network_latest_blocks,
-            network_chainhead_blocks
         );
         //TODO: check that if no networks had an new message update blocks, sleep for a few seconds and 'continue'
 
@@ -143,6 +139,20 @@ async fn main() {
         // The example here combines a single function provided query endpoint, current block info based on the subgraph's indexing network
         // Then the function gets sent to agent for making identifier independent queries
         let identifiers = GRAPHCAST_AGENT.get().unwrap().content_identifiers().await;
+        let num_topics = identifiers.len();
+        //TODO: move to helper
+        let blocks_str = chainhead_block_str(&network_chainhead_blocks);
+        info!(
+            "Network statuses:\n{}: {:#?}\n{}: {:#?}\n{}: {}",
+            "Chainhead blocks",
+            blocks_str,
+            "Number of gossip peers",
+            GRAPHCAST_AGENT.get().unwrap().number_of_peers(),
+            "Number of tracked deployments (topics)",
+            num_topics,
+        );
+        let mut messages_sent = vec![];
+        let mut comparison_result_strings = vec![];
         for id in identifiers {
             // Get the indexing network of the deployment
             // and update the NETWORK message block
@@ -158,42 +168,11 @@ async fn main() {
                 }
             };
 
-            // Get the examination frequency of the network
-            let examination_frequency = match NETWORKS
-                .iter()
-                .find(|n| n.name.to_string() == network_name.to_string())
-            {
-                Some(n) => n.interval,
-                None => {
-                    warn!("Subgraph is indexing an unsupported network, please report an issue on https://github.com/graphops/graphcast-rs");
-                    continue;
-                }
-            };
-
-            // Calculate the block to send message about
-            let message_block = match network_chainhead_blocks.get(&network_name) {
-                Some(BlockPointer { hash: _, number }) => number - number % examination_frequency,
-                None => {
-                    error!(
-                        "Could not get the chainhead block number on network {} and cannot determine the block to send message about",
-                        network_name.to_string(),
-                    );
-                    continue;
-                }
-            };
-
-            let block_clock = block_store
-                .entry(network_name)
-                .or_insert_with(|| BlockClock {
-                    current_block: latest_block.number,
-                    compare_block: message_block,
-                });
-
-            // Wait a bit before querying information on the current block
-            if block_clock.current_block == message_block {
-                sleep(Duration::from_secs(5));
-                continue;
-            }
+            let message_block =
+                match determine_message_block(&network_chainhead_blocks, network_name) {
+                    Ok(block) => block,
+                    Err(_) => continue,
+                };
 
             let msgs = MESSAGES.get().unwrap().lock().unwrap().to_vec();
             // first stored message block
@@ -205,77 +184,97 @@ async fn main() {
             .await;
 
             info!(
-                "{} {} {} {} {} {} {} {}",
-                "🔗 Message block: ".cyan(),
+                "Deployment status:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}",
+                "IPFS Hash",
+                id.clone(),
+                "Network",
+                network_name,
+                "Send message block",
                 message_block,
-                "🔗 Current block from block clock: ".cyan(),
-                block_clock.current_block,
-                "🔗 Latest block: ".cyan(),
+                "Latest block",
                 latest_block.number,
-                "🔗 Compare block: ".cyan(),
-                compare_block
+                "Reached send message block",
+                latest_block.number >= message_block,
+                "Reached comparison time",
+                Utc::now().timestamp() >= comparison_trigger,
             );
 
-            // Update block clock
-            block_clock.current_block = latest_block.number;
-
             if Utc::now().timestamp() >= comparison_trigger {
-                info!("{}", "Comparing attestations");
-                trace!("{}{:?}", "Messages: ", MESSAGES);
-
                 let msgs = MESSAGES.get().unwrap().lock().unwrap().to_vec();
-                let remote_attestations = process_messages(
+                // Update to only process the identifier&compare_block related messages
+                let msgs: Vec<GraphcastMessage<RadioPayloadMessage>> = msgs
+                    .iter()
+                    .filter(|&m| m.identifier == id.clone() && m.block_number == compare_block)
+                    .cloned()
+                    .collect();
+
+                debug!(
+                    "Comparing validated messages:\n{}: {}\n{}: {}\n{}: {}",
+                    "Deployment",
+                    id.clone(),
+                    "Block",
+                    compare_block,
+                    "Number of messages",
+                    msgs.len(),
+                );
+                let remote_attestations_result = process_messages(
                     Arc::new(AsyncMutex::new(msgs)),
                     &config.registry_subgraph,
                     &config.network_subgraph,
                 )
                 .await;
-                match remote_attestations {
-                    Ok(remote_attestations) => {
-                        let comparison_result = compare_attestations(
-                            compare_block,
-                            remote_attestations.clone(),
-                            Arc::clone(&local_attestations),
-                        )
-                        .await;
-
-                        match comparison_result {
-                            Ok(ComparisonResult::Match(msg)) => {
-                                info!("{}", msg.green().bold());
-                                // Only clear the ones matching identifier and block number
-                                MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
-                                    msg.block_number != compare_block
-                                        || msg.identifier != id.clone()
-                                });
-                                debug!("Messages left: {:#?}", MESSAGES);
-                            }
-                            Ok(ComparisonResult::NotFound(m)) => {
-                                warn!("{}", m);
-                                MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
-                                    msg.block_number != compare_block
-                                        || msg.identifier != id.clone()
-                                });
-                                debug!("Messages left: {:#?}", MESSAGES);
-                            }
-                            Ok(ComparisonResult::Divergent(m)) => {
-                                error!("{}", m);
-                                MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
-                                    msg.block_number != compare_block
-                                        || msg.identifier != id.clone()
-                                });
-                                debug!("Messages left: {:#?}", MESSAGES);
-                            }
-                            Err(e) => {
-                                error!("An error occured while comparing attestations: {}", e);
-                            }
-                        }
+                let remote_attestations = match remote_attestations_result {
+                    Ok(remote) => {
+                        debug!(
+                            "Processed messages:\n{}: {}",
+                            "Number of unique remote POIs",
+                            remote.len(),
+                        );
+                        remote
                     }
                     Err(err) => {
-                        error!(
-                            "{}{}",
-                            "An error occured while parsing messages: {}".red().bold(),
-                            err
-                        );
+                        error!("{}{}", "An error occured while parsing messages: {}", err);
+                        continue;
+                    }
+                };
+
+                let comparison_result = compare_attestations(
+                    compare_block,
+                    remote_attestations.clone(),
+                    Arc::clone(&local_attestations),
+                )
+                .await;
+
+                match comparison_result {
+                    Ok(ComparisonResult::Match(msg)) => {
+                        debug!("{}", msg.clone());
+                        comparison_result_strings.push(ComparisonResult::Match(msg.clone()));
+                        // Only clear the ones matching identifier and block number
+                        MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
+                            msg.block_number != compare_block || msg.identifier != id.clone()
+                        });
+                        debug!("Messages left: {:#?}", MESSAGES);
+                    }
+                    Ok(ComparisonResult::NotFound(msg)) => {
+                        warn!("{}", msg);
+                        comparison_result_strings.push(ComparisonResult::NotFound(msg.clone()));
+                        // TODO: perhaps add conditional remove by timestamps
+                        MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
+                            msg.block_number != compare_block || msg.identifier != id.clone()
+                        });
+                        debug!("Messages left: {:#?}", MESSAGES);
+                    }
+                    Ok(ComparisonResult::Divergent(msg)) => {
+                        error!("{}", msg);
+                        comparison_result_strings.push(ComparisonResult::Divergent(msg.clone()));
+                        // TODO: perhaps add conditional remove by timestamps
+                        MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
+                            msg.block_number != compare_block || msg.identifier != id.clone()
+                        });
+                        debug!("Messages left: {:#?}", MESSAGES);
+                    }
+                    Err(e) => {
+                        error!("An error occured while comparing attestations: {}", e);
                     }
                 }
             }
@@ -328,15 +327,46 @@ async fn main() {
                             )
                             .await
                         {
-                            Ok(sent) => info!("{}: {}", "Sent message id".green(), sent),
-                            Err(e) => error!("{}: {}", "Failed to send message".red(), e),
+                            Ok(id) => messages_sent.push(id),
+                            Err(e) => error!("{}: {}", "Failed to send message", e),
                         };
                     }
-                    Err(e) => error!("{}: {}", "Failed to query message".red(), e),
+                    Err(e) => error!("{}: {}", "Failed to query message content", e),
                 }
             }
         }
 
+        // Generate attestation summary
+        let mut match_strings = vec![];
+        let mut not_found_strings = vec![];
+        let mut divergent_strings = vec![];
+
+        for result in comparison_result_strings {
+            match result {
+                ComparisonResult::Match(s) => {
+                    match_strings.push(s);
+                }
+                ComparisonResult::NotFound(s) => {
+                    not_found_strings.push(s);
+                }
+                ComparisonResult::Divergent(s) => {
+                    divergent_strings.push(s);
+                }
+            }
+        }
+        info!(
+            "Operation summary:\n{}: {}\n{} out of {} deployments cross checked\n{}: {}\n{}: {}\n{}: {:#?}",
+            "Number of messages sent",
+            messages_sent.len(),
+            match_strings.len() + divergent_strings.len(),
+            num_topics,
+            "Successful attestations",
+            match_strings.len(),
+            "Topics without attestations",
+            not_found_strings.len(),
+            "Divergence",
+            divergent_strings,
+        );
         sleep(Duration::from_secs(5));
         continue;
     }
