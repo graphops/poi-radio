@@ -2,7 +2,13 @@ use graphql_client::{GraphQLQuery, Response};
 use serde_derive::{Deserialize, Serialize};
 
 // Maybe later on move graphql to SDK as the queries are pretty standarded
-use graphcast_sdk::graphql::QueryError;
+use graphcast_sdk::{graphql::QueryError, BlockPointer};
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SubgraphStatus {
+    pub network: String,
+    pub block: BlockPointer,
+}
 
 /// Derived GraphQL Query to Proof of Indexing
 #[derive(GraphQLQuery, Serialize, Deserialize, Debug)]

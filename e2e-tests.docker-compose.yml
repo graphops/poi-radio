@@ -1,0 +1,35 @@
+version: "3"
+services:
+  basic-instance:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - ./.env
+    entrypoint:
+      [
+        "/usr/local/bin/integration-tests",
+        "--instance=basic"
+      ]
+  divergent-instance:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - ./.env
+    entrypoint:
+      [
+        "/usr/local/bin/integration-tests",
+        "--instance=divergent"
+      ]
+  invalid-payload-instance:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - ./.env
+    entrypoint:
+      [
+        "/usr/local/bin/integration-tests",
+        "--instance=invalid_payload"
+      ]
