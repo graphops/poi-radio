@@ -9,19 +9,21 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    fmt::Display,
+    fmt::{self, Display},
     sync::{Arc, Mutex as SyncMutex},
 };
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, error, info, warn};
 
 use graphcast_sdk::{
+    config::NetworkName,
     graphcast_agent::{
         message_typing::{get_indexer_stake, GraphcastMessage},
         waku_handling::WakuHandlingError,
         GraphcastAgent,
     },
     graphql::{client_network::query_network_subgraph, client_registry::query_registry_indexer},
+    BlockPointer,
 };
 
 #[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize)]
@@ -87,26 +89,22 @@ pub fn update_blocks(
 /// A vec of strings for subtopics
 pub async fn active_allocation_hashes(
     network_subgraph: &str,
-    indexer_address: Option<String>,
+    indexer_address: String,
 ) -> Vec<String> {
-    if let Some(addr) = indexer_address {
-        query_network_subgraph(network_subgraph.to_string(), addr)
-            .await
-            .map_err(|e| -> Vec<String> {
-                error!("Topic generation error: {}", e);
-                [].to_vec()
-            })
-            .unwrap()
-            .indexer_allocations()
-    } else {
-        [].to_vec()
-    }
+    query_network_subgraph(network_subgraph.to_string(), indexer_address)
+        .await
+        .map_err(|e| -> Vec<String> {
+            error!("Topic generation error: {}", e);
+            [].to_vec()
+        })
+        .unwrap()
+        .indexer_allocations()
 }
 
 /// Generate default topics along with given static topics
 pub async fn generate_topics(
     network_subgraph: String,
-    indexer_address: Option<String>,
+    indexer_address: String,
     static_topics: &Vec<String>,
 ) -> Vec<String> {
     let mut topics = active_allocation_hashes(&network_subgraph, indexer_address).await;
@@ -132,11 +130,9 @@ pub async fn process_messages(
     for msg in messages.lock().await.iter() {
         let radio_msg = &msg.payload.clone().unwrap();
         let sender = msg.recover_sender_address()?;
-        let sender_stake = get_indexer_stake(
-            query_registry_indexer(registry_subgraph.to_string(), sender.clone()).await?,
-            network_subgraph,
-        )
-        .await?;
+        let indexer_address =
+            query_registry_indexer(registry_subgraph.to_string(), sender.clone()).await?;
+        let sender_stake = get_indexer_stake(indexer_address.clone(), network_subgraph).await?;
 
         // Check if there are existing attestations for the block
         let blocks = remote_attestations
@@ -151,15 +147,18 @@ pub async fn process_messages(
         match existing_attestation {
             Some(existing_attestation) => {
                 existing_attestation.stake_weight += sender_stake;
-                if !existing_attestation.senders.contains(&sender) {
-                    existing_attestation.senders.push(sender);
+                if !existing_attestation
+                    .senders
+                    .contains(&indexer_address.clone())
+                {
+                    existing_attestation.senders.push(indexer_address.clone());
                 }
             }
             None => {
                 attestations.push(Attestation::new(
                     radio_msg.payload_content().to_string(),
                     sender_stake,
-                    vec![sender],
+                    vec![indexer_address],
                 ));
             }
         }
@@ -202,6 +201,16 @@ impl Attestation {
     }
 }
 
+impl fmt::Display for Attestation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "NPOI: {}\nsender addresses: {:#?}\nstake weight: {}",
+            self.npoi, self.senders, self.stake_weight
+        )
+    }
+}
+
 /// Saves NPOIs that we've generated locally, in order to compare them with remote ones later
 pub fn save_local_attestation(
     local_attestations: &mut LocalAttestationsMap,
@@ -240,7 +249,7 @@ pub fn attestation_handler(
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum ComparisonResult {
     NotFound(String),
     Divergent(String),
@@ -267,6 +276,11 @@ pub async fn compare_attestations(
     remote: RemoteAttestationsMap,
     local: Arc<AsyncMutex<LocalAttestationsMap>>,
 ) -> Result<ComparisonResult, anyhow::Error> {
+    debug!(
+        "Comparing attestations:\nlocal: {:#?}\n remote: {:#?}",
+        local, remote
+    );
+
     let local = local.lock().await;
     let (ipfs_hash, blocks) = match local.iter().next() {
         Some(pair) => pair,
@@ -305,11 +319,6 @@ pub async fn compare_attestations(
     let mut remote_attestations = remote_attestations.clone();
     remote_attestations.sort_by(|a, b| a.stake_weight.partial_cmp(&b.stake_weight).unwrap());
 
-    info!(
-        "Number of nPOI submitted for block {}: {:#?}",
-        attestation_block,
-        remote_attestations.len()
-    );
     if remote_attestations.len() > 1 {
         warn!(
             "More than 1 nPOI found for subgraph {} on block {}. Attestations (sorted): {:#?}",
@@ -319,14 +328,39 @@ pub async fn compare_attestations(
 
     let most_attested_npoi = &remote_attestations.last().unwrap().npoi;
     if most_attested_npoi == &local_attestation.npoi {
+        info!(
+            "nPOI matched for subgraph {} on block {} with {} of remote attestations",
+            ipfs_hash,
+            attestation_block,
+            remote_attestations.len(),
+        );
         Ok(ComparisonResult::Match(format!(
             "POIs match for subgraph {ipfs_hash} on block {attestation_block}!: {most_attested_npoi}"
         )))
     } else {
+        info!(
+            "Number of nPOI submitted for block {}: {:#?}\n{}: {:#?}",
+            attestation_block, remote_attestations, "Local attestation", local_attestation
+        );
         Ok(ComparisonResult::Divergent(format!(
-            "POIs don't match for subgraph {ipfs_hash} on block {attestation_block}!"
+            "POIs don't match for subgraph {ipfs_hash} on block {attestation_block}!\nlocal attestation: {local:#?}\nremote attestations: {remote:#?}"
         )))
     }
+}
+
+pub fn chainhead_block_str(
+    network_chainhead_blocks: &HashMap<NetworkName, BlockPointer>,
+) -> String {
+    let mut blocks_str = String::new();
+    blocks_str.push_str("{ ");
+    for (i, (network, block_pointer)) in network_chainhead_blocks.iter().enumerate() {
+        if i > 0 {
+            blocks_str.push_str(", ");
+        }
+        blocks_str.push_str(&format!("{}: {}", network, block_pointer.number));
+    }
+    blocks_str.push_str(" }");
+    blocks_str
 }
 
 #[cfg(test)]
