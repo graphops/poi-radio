@@ -9,7 +9,7 @@ The key requirement for an Indexer to earn indexing rewards is to submit a valid
 
 ## 🧪 Testing
 
-To run unit tests for the Radio. We recommend using [nextest](https://nexte.st/) as your test runner. Once you have it installed you can run the tests using the following commands:
+To run unit tests for the Radio. We recommend using [nextest](https://nexte.st/) as yourst runner. Once you have it installed you can run the tests using the following commands:
 
 ```
 cargo nextest run
