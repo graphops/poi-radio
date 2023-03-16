@@ -31,5 +31,5 @@ RUN apt-get update \
         ca-certificates \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build-image "/poi-radio/target/release/poi-radio" "/usr/bin/local/poi-radio"
-ENTRYPOINT [ "/usr/bin/local/poi-radio" ]
+COPY --from=build-image "/poi-radio/target/release/poi-radio" "/usr/local/bin/poi-radio"
+ENTRYPOINT [ "/usr/local/bin/poi-radio" ]

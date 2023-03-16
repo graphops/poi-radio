@@ -272,6 +272,7 @@ impl Display for ComparisonResult {
 /// with the same NPOI from an Indexer (NOTE: one Indexer can only send 1 attestation per subgraph per block). The attestations are then sorted
 /// and we take the one with the highest total stake-weight.
 pub async fn compare_attestations(
+    network_name: NetworkName,
     attestation_block: u64,
     remote: RemoteAttestationsMap,
     local: Arc<AsyncMutex<LocalAttestationsMap>>,
@@ -343,7 +344,8 @@ pub async fn compare_attestations(
             attestation_block, remote_attestations, "Local attestation", local_attestation
         );
         Ok(ComparisonResult::Divergent(format!(
-            "POIs don't match for subgraph {ipfs_hash} on block {attestation_block}!\nlocal attestation: {local:#?}\nremote attestations: {remote:#?}"
+            "❗ POIs don't match for subgraph {} on network {} at block {}!\n\nLocal attestation:\n{:#?}\n\nRemote attestations:\n{:#?}",
+            ipfs_hash, network_name, attestation_block, local_attestation, remote_attestations
         )))
     }
 }
@@ -530,6 +532,7 @@ mod tests {
     #[tokio::test]
     async fn test_compare_attestations_generic_fail() {
         let res = compare_attestations(
+            NetworkName::Goerli,
             42,
             HashMap::new(),
             Arc::new(AsyncMutex::new(HashMap::new())),
@@ -570,6 +573,7 @@ mod tests {
         local_attestations.insert("different-awesome-hash".to_string(), local_blocks);
 
         let res = compare_attestations(
+            NetworkName::Goerli,
             42,
             remote_attestations,
             Arc::new(AsyncMutex::new(local_attestations)),
@@ -596,6 +600,7 @@ mod tests {
         local_attestations.insert("my-awesome-hash".to_string(), local_blocks);
 
         let res = compare_attestations(
+            NetworkName::Goerli,
             42,
             remote_attestations,
             Arc::new(AsyncMutex::new(local_attestations)),
@@ -636,6 +641,7 @@ mod tests {
         local_attestations.insert("my-awesome-hash".to_string(), local_blocks);
 
         let res = compare_attestations(
+            NetworkName::Goerli,
             42,
             remote_attestations,
             Arc::new(AsyncMutex::new(local_attestations)),
