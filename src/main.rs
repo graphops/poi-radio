@@ -2,6 +2,7 @@ use chrono::Utc;
 
 use dotenv::dotenv;
 use ethers::signers::LocalWallet;
+use graphcast_sdk::bots::{DiscordBot, SlackBot};
 /// Radio specific query function to fetch Proof of Indexing for each allocated subgraph
 use graphcast_sdk::config::{Config, NetworkName};
 use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
@@ -239,6 +240,7 @@ async fn main() {
                 };
 
                 let comparison_result = compare_attestations(
+                    network_name,
                     compare_block,
                     remote_attestations.clone(),
                     Arc::clone(&local_attestations),
@@ -266,6 +268,31 @@ async fn main() {
                     }
                     Ok(ComparisonResult::Divergent(msg)) => {
                         error!("{}", msg);
+
+                        if let (Some(token), Some(channel)) =
+                            (&config.slack_token, &config.slack_channel)
+                        {
+                            if let Err(e) = SlackBot::send_webhook(
+                                token.to_string(),
+                                channel.as_str(),
+                                radio_name,
+                                msg.as_str(),
+                            )
+                            .await
+                            {
+                                warn!("Failed to send notification to Slack: {}", e);
+                            }
+                        }
+
+                        if let Some(webhook_url) = &config.discord_webhook {
+                            if let Err(e) =
+                                DiscordBot::send_webhook(webhook_url, radio_name, msg.as_str())
+                                    .await
+                            {
+                                warn!("Failed to send notification to Discord: {}", e);
+                            }
+                        }
+
                         comparison_result_strings.push(ComparisonResult::Divergent(msg.clone()));
                         // TODO: perhaps add conditional remove by timestamps
                         MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
