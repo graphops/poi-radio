@@ -26,6 +26,8 @@ use graphcast_sdk::{
     BlockPointer,
 };
 
+pub mod graphql;
+
 #[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize)]
 #[eip712(
     name = "Graphcast POI Radio",
@@ -55,6 +57,9 @@ impl RadioPayloadMessage {
 
 pub type RemoteAttestationsMap = HashMap<String, HashMap<u64, Vec<Attestation>>>;
 pub type LocalAttestationsMap = HashMap<String, HashMap<u64, Attestation>>;
+
+pub type MessagesVec = OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>>;
+pub type MessagesArc = Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>;
 
 /// A global static (singleton) instance of GraphcastAgent. It is useful to ensure that we have only one GraphcastAgent
 /// per Radio instance, so that we can keep track of state and more easily test our Radio application.
