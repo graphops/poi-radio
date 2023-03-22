@@ -5,7 +5,6 @@ use ethers_derive_eip712::*;
 use num_bigint::BigUint;
 use once_cell::sync::OnceCell;
 use prost::Message;
-
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -16,13 +15,13 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, error, info, warn};
 
 use graphcast_sdk::{
-    config::NetworkName,
     graphcast_agent::{
         message_typing::{get_indexer_stake, GraphcastMessage},
         waku_handling::WakuHandlingError,
         GraphcastAgent,
     },
     graphql::{client_network::query_network_subgraph, client_registry::query_registry_indexer},
+    networks::NetworkName,
     BlockPointer,
 };
 
@@ -74,12 +73,18 @@ pub fn update_blocks(
     npoi: String,
     stake: BigUint,
     address: String,
+    timestamp: i64,
 ) -> HashMap<u64, Vec<Attestation>> {
     let mut blocks_clone: HashMap<u64, Vec<Attestation>> = HashMap::new();
     blocks_clone.extend(blocks.clone());
     blocks_clone.insert(
         block_number,
-        vec![Attestation::new(npoi, stake, vec![address])],
+        vec![Attestation::new(
+            npoi,
+            stake,
+            vec![address],
+            vec![timestamp],
+        )],
     );
     blocks_clone
 }
@@ -159,11 +164,40 @@ pub async fn process_messages(
                     radio_msg.payload_content().to_string(),
                     sender_stake,
                     vec![indexer_address],
+                    vec![msg.nonce],
                 ));
             }
         }
     }
     Ok(remote_attestations)
+}
+
+/// Determine the comparison pointer on both block and time based on the local attestations
+/// If they don't exist, then return default value that shall never be validated to trigger
+pub async fn local_comparison_point(
+    local_attestations: Arc<AsyncMutex<LocalAttestationsMap>>,
+    id: String,
+    collect_window_duration: i64,
+) -> (u64, i64) {
+    let local_attestation = local_attestations.lock().await;
+    if let Some(blocks_map) = local_attestation.get(&id) {
+        // Find the attestaion by the smallest block
+        blocks_map
+            .iter()
+            .min_by_key(|(&min_block, attestation)| {
+                // unwrap is okay because we add timestamp at local creation of attestation
+                (min_block, *attestation.timestamp.first().unwrap())
+            })
+            .map(|(&block, a)| {
+                (
+                    block,
+                    *a.timestamp.first().unwrap() + collect_window_duration,
+                )
+            })
+            .unwrap_or((0_u64, i64::MAX))
+    } else {
+        (0_u64, i64::MAX)
+    }
 }
 
 /// A wrapper around an attested NPOI, tracks Indexers that have sent it plus their accumulated stake
@@ -172,30 +206,42 @@ pub struct Attestation {
     pub npoi: String,
     pub stake_weight: BigUint,
     pub senders: Vec<String>,
+    pub timestamp: Vec<i64>,
 }
 
 impl Attestation {
-    pub fn new(npoi: String, stake_weight: BigUint, senders: Vec<String>) -> Self {
+    pub fn new(
+        npoi: String,
+        stake_weight: BigUint,
+        senders: Vec<String>,
+        timestamp: Vec<i64>,
+    ) -> Self {
         Attestation {
             npoi,
             stake_weight,
             senders,
+            timestamp,
         }
     }
 
     /// Used whenever we receive a new attestation for an NPOI that already exists in the store
-    pub fn update(base: &Self, address: String, stake: BigUint) -> Result<Self, anyhow::Error> {
+    pub fn update(
+        base: &Self,
+        address: String,
+        stake: BigUint,
+        timestamp: i64,
+    ) -> Result<Self, anyhow::Error> {
         if base.senders.contains(&address) {
             Err(anyhow!(
                 "{}",
                 "There is already an attestation from this address. Skipping...".to_string()
             ))
         } else {
-            let senders = [base.senders.clone(), vec![address]].concat();
             Ok(Self::new(
                 base.npoi.clone(),
                 base.stake_weight.clone() + stake,
-                senders,
+                [base.senders.clone(), vec![address]].concat(),
+                [base.timestamp.clone(), vec![timestamp]].concat(),
             ))
         }
     }
@@ -232,6 +278,22 @@ pub fn save_local_attestation(
             blocks_clone.insert(block_number, attestation);
             local_attestations.insert(ipfs_hash, blocks_clone);
         }
+    }
+}
+
+/// Clear the expired local attesatoins
+pub fn clear_local_attestation(
+    local_attestations: &mut LocalAttestationsMap,
+    ipfs_hash: String,
+    block_number: u64,
+) {
+    let blocks = local_attestations.get(&ipfs_hash);
+
+    if let Some(blocks) = blocks {
+        let mut blocks_clone: HashMap<u64, Attestation> = HashMap::new();
+        blocks_clone.extend(blocks.clone());
+        blocks_clone.remove(&block_number);
+        local_attestations.insert(ipfs_hash, blocks_clone);
     }
 }
 
@@ -366,7 +428,6 @@ pub fn chainhead_block_str(
 
 #[cfg(test)]
 mod tests {
-    use graphcast_sdk::config::NetworkName;
     use num_traits::One;
 
     use super::*;
@@ -416,6 +477,7 @@ mod tests {
                 "default".to_string(),
                 BigUint::default(),
                 Vec::new(),
+                Vec::new(),
             )],
         );
         let block_clone = update_blocks(
@@ -424,6 +486,7 @@ mod tests {
             "awesome-npoi".to_string(),
             BigUint::default(),
             "address".to_string(),
+            1,
         );
 
         assert_eq!(
@@ -470,18 +533,21 @@ mod tests {
             "awesome-npoi".to_string(),
             BigUint::default(),
             vec!["i-am-groot1".to_string()],
+            vec![0],
         );
 
         let attestation2 = Attestation::new(
             "awesome-npoi".to_string(),
             BigUint::default(),
             vec!["i-am-groot2".to_string()],
+            vec![1],
         );
 
         let attestation3 = Attestation::new(
             "awesome-npoi".to_string(),
             BigUint::one(),
             vec!["i-am-groot3".to_string()],
+            vec![2],
         );
 
         let mut attestations = vec![attestation1, attestation2, attestation3];
@@ -493,6 +559,7 @@ mod tests {
             attestations.last().unwrap().senders.first().unwrap(),
             &"i-am-groot3".to_string()
         );
+        assert_eq!(attestations.last().unwrap().timestamp, vec![2]);
     }
 
     #[test]
@@ -501,13 +568,18 @@ mod tests {
             "awesome-npoi".to_string(),
             BigUint::default(),
             vec!["i-am-groot".to_string()],
+            vec![2],
         );
 
         let updated_attestation =
-            Attestation::update(&attestation, "soggip".to_string(), BigUint::one());
+            Attestation::update(&attestation, "soggip".to_string(), BigUint::one(), 1);
 
         assert!(updated_attestation.is_ok());
-        assert_eq!(updated_attestation.unwrap().stake_weight, BigUint::one());
+        assert_eq!(
+            updated_attestation.as_ref().unwrap().stake_weight,
+            BigUint::one()
+        );
+        assert_eq!(updated_attestation.unwrap().timestamp, [2, 1]);
     }
 
     #[test]
@@ -516,10 +588,15 @@ mod tests {
             "awesome-npoi".to_string(),
             BigUint::default(),
             vec!["i-am-groot".to_string()],
+            vec![0],
         );
 
-        let updated_attestation =
-            Attestation::update(&attestation, "i-am-groot".to_string(), BigUint::default());
+        let updated_attestation = Attestation::update(
+            &attestation,
+            "i-am-groot".to_string(),
+            BigUint::default(),
+            0,
+        );
 
         assert!(updated_attestation.is_err());
         assert_eq!(
@@ -556,12 +633,18 @@ mod tests {
                 "awesome-npoi".to_string(),
                 BigUint::default(),
                 vec!["i-am-groot".to_string()],
+                vec![1],
             )],
         );
 
         local_blocks.insert(
             42,
-            Attestation::new("awesome-npoi".to_string(), BigUint::default(), Vec::new()),
+            Attestation::new(
+                "awesome-npoi".to_string(),
+                BigUint::default(),
+                Vec::new(),
+                vec![0],
+            ),
         );
 
         let mut remote_attestations: HashMap<String, HashMap<u64, Vec<Attestation>>> =
@@ -624,12 +707,18 @@ mod tests {
                 "awesome-npoi".to_string(),
                 BigUint::default(),
                 vec!["i-am-groot".to_string()],
+                vec![0],
             )],
         );
 
         local_blocks.insert(
             42,
-            Attestation::new("awesome-npoi".to_string(), BigUint::default(), Vec::new()),
+            Attestation::new(
+                "awesome-npoi".to_string(),
+                BigUint::default(),
+                Vec::new(),
+                vec![0],
+            ),
         );
 
         let mut remote_attestations: HashMap<String, HashMap<u64, Vec<Attestation>>> =
@@ -654,5 +743,83 @@ mod tests {
                 "POIs match for subgraph my-awesome-hash on block 42!: awesome-npoi".to_string()
             )
         );
+    }
+
+    #[test]
+    fn clear_local_attestation_success() {
+        let mut local_blocks: HashMap<u64, Attestation> = HashMap::new();
+        let attestation1 = Attestation::new(
+            "awesome-npoi".to_string(),
+            BigUint::default(),
+            vec!["i-am-groot1".to_string()],
+            vec![0],
+        );
+
+        let attestation2 = Attestation::new(
+            "awesome-npoi".to_string(),
+            BigUint::default(),
+            vec!["i-am-groot2".to_string()],
+            vec![1],
+        );
+
+        let attestation3 = Attestation::new(
+            "awesome-npoi".to_string(),
+            BigUint::one(),
+            vec!["i-am-groot3".to_string()],
+            vec![2],
+        );
+
+        local_blocks.insert(42, attestation1);
+        local_blocks.insert(43, attestation2);
+        local_blocks.insert(44, attestation3);
+
+        let mut local_attestations: HashMap<String, HashMap<u64, Attestation>> = HashMap::new();
+        local_attestations.insert("hash".to_string(), local_blocks.clone());
+        local_attestations.insert("hash2".to_string(), local_blocks);
+
+        clear_local_attestation(&mut local_attestations, "hash".to_string(), 43);
+
+        assert_eq!(local_attestations.get("hash").unwrap().len(), 2);
+        assert!(local_attestations.get("hash").unwrap().get(&43).is_none());
+        assert_eq!(local_attestations.get("hash2").unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn local_attestation_pointer_success() {
+        let mut local_blocks: HashMap<u64, Attestation> = HashMap::new();
+        let attestation1 = Attestation::new(
+            "awesome-npoi".to_string(),
+            BigUint::default(),
+            vec!["i-am-groot1".to_string()],
+            vec![2],
+        );
+
+        let attestation2 = Attestation::new(
+            "awesome-npoi".to_string(),
+            BigUint::default(),
+            vec!["i-am-groot2".to_string()],
+            vec![4],
+        );
+
+        let attestation3 = Attestation::new(
+            "awesome-npoi".to_string(),
+            BigUint::one(),
+            vec!["i-am-groot3".to_string()],
+            vec![6],
+        );
+
+        local_blocks.insert(42, attestation1);
+        local_blocks.insert(43, attestation2);
+        local_blocks.insert(44, attestation3);
+
+        let mut local_attestations: HashMap<String, HashMap<u64, Attestation>> = HashMap::new();
+        local_attestations.insert("hash".to_string(), local_blocks.clone());
+        local_attestations.insert("hash2".to_string(), local_blocks);
+        let local = Arc::new(AsyncMutex::new(local_attestations));
+        let (block_num, collect_window_end) =
+            local_comparison_point(Arc::clone(&local), "hash".to_string(), 120).await;
+
+        assert_eq!(block_num, 42);
+        assert_eq!(collect_window_end, 122);
     }
 }

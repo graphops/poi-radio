@@ -1,23 +1,21 @@
 use chrono::Utc;
 
 use dotenv::dotenv;
-use ethers::signers::LocalWallet;
 use graphcast_sdk::bots::{DiscordBot, SlackBot};
 /// Radio specific query function to fetch Proof of Indexing for each allocated subgraph
-use graphcast_sdk::config::{Config, NetworkName};
+use graphcast_sdk::config::Config;
 use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
 use graphcast_sdk::graphcast_agent::GraphcastAgent;
 use graphcast_sdk::graphql::client_graph_node::update_chainhead_blocks;
 use graphcast_sdk::graphql::client_network::query_network_subgraph;
 use graphcast_sdk::graphql::client_registry::query_registry_indexer;
-use graphcast_sdk::{
-    comparison_trigger, determine_message_block, graphcast_id_address, BlockPointer,
-};
+use graphcast_sdk::networks::NetworkName;
+use graphcast_sdk::{build_wallet, determine_message_block, graphcast_id_address, BlockPointer};
 
 use poi_radio::{
-    attestation_handler, chainhead_block_str, compare_attestations, generate_topics,
-    process_messages, save_local_attestation, Attestation, ComparisonResult, LocalAttestationsMap,
-    RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES,
+    attestation_handler, chainhead_block_str, clear_local_attestation, compare_attestations,
+    generate_topics, local_comparison_point, process_messages, save_local_attestation, Attestation,
+    ComparisonResult, LocalAttestationsMap, RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as SyncMutex};
@@ -45,12 +43,10 @@ async fn main() {
     }
 
     let graph_node_endpoint = config.graph_node_endpoint.clone();
-    let private_key = config.private_key.clone();
-    let wallet = private_key.parse::<LocalWallet>().unwrap();
-
     // Using unwrap directly as the query has been ran in the set-up validation
+    let wallet = build_wallet(config.wallet_input().unwrap()).unwrap();
     // The query here must be Ok but so it is okay to panic here
-    // Alternatively, make validate_set_up to return these two fields
+    // Alternatively, make validate_set_up return wallet, address, and stake
     let my_address = query_registry_indexer(
         config.registry_subgraph.to_string(),
         graphcast_id_address(&wallet),
@@ -73,7 +69,7 @@ async fn main() {
 
     debug!("Initializing the Graphcast Agent");
     let graphcast_agent = GraphcastAgent::new(
-        config.private_key.clone(),
+        config.wallet_input().unwrap().to_string(),
         radio_name,
         &config.registry_subgraph,
         &config.network_subgraph,
@@ -155,6 +151,7 @@ async fn main() {
         let mut messages_sent = vec![];
         let mut comparison_result_strings = vec![];
         for id in identifiers {
+            let time = Utc::now().timestamp();
             // Get the indexing network of the deployment
             // and update the NETWORK message block
             let (network_name, latest_block) = match subgraph_network_latest_blocks.get(&id.clone())
@@ -175,10 +172,9 @@ async fn main() {
                     Err(_) => continue,
                 };
 
-            let msgs = MESSAGES.get().unwrap().lock().unwrap().to_vec();
-            // first stored message block
-            let (compare_block, comparison_trigger) = comparison_trigger(
-                Arc::new(AsyncMutex::new(msgs)),
+            // Get trigger from the local corresponding attestation
+            let (compare_block, collect_window_end) = local_comparison_point(
+                Arc::clone(&local_attestations),
                 id.clone(),
                 config.collect_message_duration,
             )
@@ -197,15 +193,76 @@ async fn main() {
                 "Reached send message block",
                 latest_block.number >= message_block,
                 "Reached comparison time",
-                Utc::now().timestamp() >= comparison_trigger,
+                time >= collect_window_end,
             );
 
-            if Utc::now().timestamp() >= comparison_trigger {
+            let poi_query =
+                partial!( query_graph_node_poi => graph_node_endpoint.clone(), id.clone(), _, _);
+
+            debug!(
+                "Checking latest block number and the message block: {0} >?= {message_block}",
+                latest_block.number
+            );
+            if latest_block.number >= message_block {
+                let block_hash = match GRAPHCAST_AGENT
+                    .get()
+                    .unwrap()
+                    .get_block_hash(network_name.to_string(), message_block)
+                    .await
+                {
+                    Ok(hash) => hash,
+                    Err(e) => {
+                        error!("Failed to query graph node for the block hash: {e}");
+                        continue;
+                    }
+                };
+
+                match poi_query(block_hash.clone(), message_block.try_into().unwrap()).await {
+                    Ok(content) => {
+                        let attestation = Attestation {
+                            npoi: content.clone(),
+                            stake_weight: my_stake.clone(),
+                            senders: vec![my_address.clone()],
+                            timestamp: vec![time],
+                        };
+
+                        save_local_attestation(
+                            &mut *local_attestations.lock().await,
+                            attestation,
+                            id.clone(),
+                            message_block,
+                        );
+
+                        let radio_message = RadioPayloadMessage::new(id.clone(), content.clone());
+                        match GRAPHCAST_AGENT
+                            .get()
+                            .unwrap()
+                            .send_message(
+                                id.clone(),
+                                network_name,
+                                message_block,
+                                Some(radio_message),
+                            )
+                            .await
+                        {
+                            Ok(id) => messages_sent.push(id),
+                            Err(e) => error!("{}: {}", "Failed to send message", e),
+                        };
+                    }
+                    Err(e) => error!("{}: {}", "Failed to query message content", e),
+                }
+            }
+
+            if time >= collect_window_end {
                 let msgs = MESSAGES.get().unwrap().lock().unwrap().to_vec();
-                // Update to only process the identifier&compare_block related messages
+                // Update to only process the identifier&compare_block related messages within the collection window
                 let msgs: Vec<GraphcastMessage<RadioPayloadMessage>> = msgs
                     .iter()
-                    .filter(|&m| m.identifier == id.clone() && m.block_number == compare_block)
+                    .filter(|&m| {
+                        m.identifier == id.clone()
+                            && m.block_number == compare_block
+                            && m.nonce <= collect_window_end
+                    })
                     .cloned()
                     .collect();
 
@@ -251,24 +308,14 @@ async fn main() {
                     Ok(ComparisonResult::Match(msg)) => {
                         debug!("{}", msg.clone());
                         comparison_result_strings.push(ComparisonResult::Match(msg.clone()));
-                        // Only clear the ones matching identifier and block number
-                        MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
-                            msg.block_number != compare_block || msg.identifier != id.clone()
-                        });
-                        debug!("Messages left: {:#?}", MESSAGES);
                     }
                     Ok(ComparisonResult::NotFound(msg)) => {
                         warn!("{}", msg);
                         comparison_result_strings.push(ComparisonResult::NotFound(msg.clone()));
                         // TODO: perhaps add conditional remove by timestamps
-                        MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
-                            msg.block_number != compare_block || msg.identifier != id.clone()
-                        });
-                        debug!("Messages left: {:#?}", MESSAGES);
                     }
                     Ok(ComparisonResult::Divergent(msg)) => {
                         error!("{}", msg);
-
                         if let (Some(token), Some(channel)) =
                             (&config.slack_token, &config.slack_channel)
                         {
@@ -294,72 +341,25 @@ async fn main() {
                         }
 
                         comparison_result_strings.push(ComparisonResult::Divergent(msg.clone()));
-                        // TODO: perhaps add conditional remove by timestamps
-                        MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
-                            msg.block_number != compare_block || msg.identifier != id.clone()
-                        });
-                        debug!("Messages left: {:#?}", MESSAGES);
                     }
                     Err(e) => {
                         error!("An error occured while comparing attestations: {}", e);
                     }
                 }
-            }
-
-            let poi_query =
-                partial!( query_graph_node_poi => graph_node_endpoint.clone(), id.clone(), _, _);
-
-            debug!(
-                "Checking latest block number and the message block: {0} >?= {message_block}",
-                latest_block.number
-            );
-            if latest_block.number >= message_block {
-                let block_hash = match GRAPHCAST_AGENT
+                // Only clear the ones matching identifier and block number equal or less
+                // Retain the msgs with a different identifier, or if their block number is greater
+                clear_local_attestation(
+                    &mut *local_attestations.lock().await,
+                    id.clone(),
+                    compare_block,
+                );
+                MESSAGES
                     .get()
                     .unwrap()
-                    .get_block_hash(network_name.to_string(), message_block)
-                    .await
-                {
-                    Ok(hash) => hash,
-                    Err(e) => {
-                        error!("Failed to query graph node for the block hash: {e}");
-                        continue;
-                    }
-                };
-
-                match poi_query(block_hash.clone(), message_block.try_into().unwrap()).await {
-                    Ok(content) => {
-                        let attestation = Attestation {
-                            npoi: content.clone(),
-                            stake_weight: my_stake.clone(),
-                            senders: Vec::new(),
-                        };
-
-                        save_local_attestation(
-                            &mut *local_attestations.lock().await,
-                            attestation,
-                            id.clone(),
-                            message_block,
-                        );
-
-                        let radio_message = RadioPayloadMessage::new(id.clone(), content.clone());
-                        match GRAPHCAST_AGENT
-                            .get()
-                            .unwrap()
-                            .send_message(
-                                id.clone(),
-                                network_name,
-                                message_block,
-                                Some(radio_message),
-                            )
-                            .await
-                        {
-                            Ok(id) => messages_sent.push(id),
-                            Err(e) => error!("{}: {}", "Failed to send message", e),
-                        };
-                    }
-                    Err(e) => error!("{}: {}", "Failed to query message content", e),
-                }
+                    .lock()
+                    .unwrap()
+                    .retain(|msg| msg.block_number > compare_block || msg.identifier != id.clone());
+                debug!("Messages left: {:#?}", MESSAGES);
             }
         }
 
