@@ -6,3 +6,4 @@
 /.fleet
 /examples/target
 boot_node_addr.conf
+data

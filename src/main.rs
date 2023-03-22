@@ -4,20 +4,21 @@ use dotenv::dotenv;
 use ethers::signers::LocalWallet;
 use graphcast_sdk::bots::{DiscordBot, SlackBot};
 /// Radio specific query function to fetch Proof of Indexing for each allocated subgraph
-use graphcast_sdk::config::{Config, NetworkName};
+use graphcast_sdk::config::Config;
 use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
 use graphcast_sdk::graphcast_agent::GraphcastAgent;
 use graphcast_sdk::graphql::client_graph_node::update_chainhead_blocks;
 use graphcast_sdk::graphql::client_network::query_network_subgraph;
 use graphcast_sdk::graphql::client_registry::query_registry_indexer;
+use graphcast_sdk::networks::NetworkName;
 use graphcast_sdk::{
     comparison_trigger, determine_message_block, graphcast_id_address, BlockPointer,
 };
 
 use poi_radio::{
     attestation_handler, chainhead_block_str, compare_attestations, generate_topics,
-    process_messages, save_local_attestation, Attestation, ComparisonResult, LocalAttestationsMap,
-    RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES,
+    metrics::start_prometheus_server, process_messages, save_local_attestation, Attestation,
+    ComparisonResult, LocalAttestationsMap, RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as SyncMutex};
@@ -44,8 +45,12 @@ async fn main() {
         panic!("Could not validate the supplied configurations: {e}")
     }
 
+    if let Some(true) = config.prometheus_metrics {
+        start_prometheus_server();
+    }
+
     let graph_node_endpoint = config.graph_node_endpoint.clone();
-    let private_key = config.private_key.clone();
+    let private_key = &config.wallet_input().unwrap().to_string();
     let wallet = private_key.parse::<LocalWallet>().unwrap();
 
     // Using unwrap directly as the query has been ran in the set-up validation
@@ -73,7 +78,7 @@ async fn main() {
 
     debug!("Initializing the Graphcast Agent");
     let graphcast_agent = GraphcastAgent::new(
-        config.private_key.clone(),
+        config.private_key.clone().unwrap().clone(),
         radio_name,
         &config.registry_subgraph,
         &config.network_subgraph,
@@ -244,6 +249,7 @@ async fn main() {
                     compare_block,
                     remote_attestations.clone(),
                     Arc::clone(&local_attestations),
+                    id.clone(),
                 )
                 .await;
 
@@ -396,158 +402,5 @@ async fn main() {
         );
         sleep(Duration::from_secs(5));
         continue;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hex::encode;
-    use rand::{thread_rng, Rng};
-    use secp256k1::SecretKey;
-    use std::env;
-    use std::sync::{Arc, Mutex as SyncMutex};
-    use tokio::sync::Mutex as AsyncMutex;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    #[tokio::test]
-    #[ignore]
-    async fn regression_test() {
-        dotenv().ok();
-
-        let is_display = matches!(std::env::args().nth(1), Some(x) if x == *"display");
-        let mut rng = thread_rng();
-        let mut private_key = [0u8; 32];
-        rng.fill(&mut private_key[..]);
-
-        let private_key = SecretKey::from_slice(&private_key).expect("Error parsing secret key");
-        let private_key_hex = encode(private_key.secret_bytes());
-        env::set_var("PRIVATE_KEY", &private_key_hex);
-
-        let mock_server = MockServer::start().await;
-
-        Mock::given(method("POST"))
-            .and(path("/graphcast-registry"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{
-                    "data": {
-                        "indexer": {
-                            "graphcastID": "0x54f4cdc1ac7cd3377f43834fbde09a7ffe6fe337"
-                        }
-                    },
-                    "errors": null
-                }"#,
-            ))
-            .mount(&mock_server)
-            .await;
-
-        Mock::given(method("POST"))
-            .and(path("/network-subgraph"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{
-                    "data": {
-                        "indexer" : {
-                            "stakedTokens": "100000000000000000000000",
-                            "allocations": [{
-                                "subgraphDeployment": {
-                                    "ipfsHash": "QmbaLc7fEfLGUioKWehRhq838rRzeR8cBoapNJWNSAZE8u"
-                                }
-                            }]
-                        },
-                        "graphNetwork": {
-                            "minimumIndexerStake": "100000000000000000000000"
-                        }
-                    },
-                    "errors": null
-                }"#,
-            ))
-            .mount(&mock_server)
-            .await;
-
-        Mock::given(method("POST"))
-            .and(path("/graph-node-status"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{
-                    "data": {
-                        "block_hash_from_number" : "193bb3a5e78b8726f6138cfae7dd18c83fe32843032999966fd2ca6973f88f3b"
-                    },
-                    "errors": null
-                }"#,
-            ))
-            .mount(&mock_server)
-            .await;
-
-        let private_key = env::var("PRIVATE_KEY").expect("No private key provided.");
-
-        // TODO: Add something random and unique here to avoid noise form other operators
-        let radio_name: &str = "test-poi-crosschecker-radio";
-
-        let graphcast_agent = GraphcastAgent::new(
-            private_key,
-            radio_name,
-            &(mock_server.uri() + "/graphcast-registry"),
-            &(mock_server.uri() + "/network-subgraph"),
-            &(mock_server.uri() + "/graph-node-status"),
-            [].to_vec(),
-            Some("default"),
-            vec!["some-hash".to_string()],
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        _ = GRAPHCAST_AGENT.set(graphcast_agent);
-        _ = MESSAGES.set(Arc::new(SyncMutex::new(vec![])));
-
-        GRAPHCAST_AGENT
-            .get()
-            .unwrap()
-            .register_handler(Arc::new(AsyncMutex::new(attestation_handler())))
-            .expect("Could not register handler (Should not get here)");
-        let hash = "some-hash".to_string();
-        let content = "poi".to_string();
-
-        let radio_msg = RadioPayloadMessage::new(hash.clone(), content.clone());
-        let network = NetworkName::from_string("goerli");
-        let mut block = 0;
-        // Just to introduce sender and skip first time check
-        GRAPHCAST_AGENT
-            .get()
-            .unwrap()
-            .send_message(
-                "some-hash".to_string(),
-                network,
-                block,
-                Some(radio_msg.clone()),
-            )
-            .await
-            .unwrap();
-
-        sleep(Duration::from_secs(1));
-
-        loop {
-            GRAPHCAST_AGENT
-                .get()
-                .unwrap()
-                .send_message(
-                    "some-hash".to_string(),
-                    network,
-                    block,
-                    Some(radio_msg.clone()),
-                )
-                .await
-                .unwrap();
-
-            if is_display && MESSAGES.get().unwrap().lock().unwrap().len() > 4 {
-                break;
-            }
-
-            block += 1;
-            sleep(Duration::from_secs(1));
-        }
     }
 }

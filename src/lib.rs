@@ -2,13 +2,14 @@ use anyhow::anyhow;
 use ethers_contract::EthAbiType;
 use ethers_core::types::transaction::eip712::Eip712;
 use ethers_derive_eip712::*;
+use metrics::{ACTIVE_SUBGRAPHS, VALIDATED_MESSAGES};
 use num_bigint::BigUint;
 use once_cell::sync::OnceCell;
 use prost::Message;
 
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::{self, Display},
     sync::{Arc, Mutex as SyncMutex},
 };
@@ -16,15 +17,17 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, error, info, warn};
 
 use graphcast_sdk::{
-    config::NetworkName,
     graphcast_agent::{
         message_typing::{get_indexer_stake, GraphcastMessage},
         waku_handling::WakuHandlingError,
         GraphcastAgent,
     },
     graphql::{client_network::query_network_subgraph, client_registry::query_registry_indexer},
+    networks::NetworkName,
     BlockPointer,
 };
+
+pub mod metrics;
 
 #[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize)]
 #[eip712(
@@ -244,6 +247,7 @@ pub fn attestation_handler(
         // TODO: Handle the error case by incrementing a Prometheus "error" counter
         if let Ok(msg) = msg {
             debug!("Received message: {:?}", msg);
+            VALIDATED_MESSAGES.inc();
             MESSAGES.get().unwrap().lock().unwrap().push(msg);
         }
     }
@@ -276,6 +280,7 @@ pub async fn compare_attestations(
     attestation_block: u64,
     remote: RemoteAttestationsMap,
     local: Arc<AsyncMutex<LocalAttestationsMap>>,
+    ipfs_hash: String,
 ) -> Result<ComparisonResult, anyhow::Error> {
     debug!(
         "Comparing attestations:\nlocal: {:#?}\n remote: {:#?}",
@@ -283,14 +288,16 @@ pub async fn compare_attestations(
     );
 
     let local = local.lock().await;
-    let (ipfs_hash, blocks) = match local.iter().next() {
-        Some(pair) => pair,
+
+    let blocks = match local.get(&ipfs_hash) {
+        Some(blocks) => blocks,
         None => {
             return Ok(ComparisonResult::NotFound(String::from(
                 "No local attestation found",
             )))
         }
     };
+
     let local_attestation = match blocks.get(&attestation_block) {
         Some(attestations) => attestations,
         None => {
@@ -300,7 +307,7 @@ pub async fn compare_attestations(
         }
     };
 
-    let remote_blocks = match remote.get(ipfs_hash) {
+    let remote_blocks = match remote.get(&ipfs_hash) {
         Some(blocks) => blocks,
         None => {
             return Ok(ComparisonResult::NotFound(format!(
@@ -319,6 +326,19 @@ pub async fn compare_attestations(
 
     let mut remote_attestations = remote_attestations.clone();
     remote_attestations.sort_by(|a, b| a.stake_weight.partial_cmp(&b.stake_weight).unwrap());
+
+    let subgraph_gauge = ACTIVE_SUBGRAPHS.with_label_values(&[&ipfs_hash]);
+
+    let all_senders: Vec<String> = remote_attestations
+        .clone()
+        .into_iter()
+        .flat_map(|attestation| attestation.senders)
+        .collect();
+
+    let unique_senders: HashSet<String> = HashSet::from_iter(all_senders.into_iter());
+
+    // The value is the total number of unique senders that are attesting for that subgraph
+    subgraph_gauge.set(unique_senders.len().try_into().unwrap());
 
     if remote_attestations.len() > 1 {
         warn!(
@@ -367,7 +387,7 @@ pub fn chainhead_block_str(
 
 #[cfg(test)]
 mod tests {
-    use graphcast_sdk::config::NetworkName;
+    use graphcast_sdk::networks::NetworkName;
     use num_traits::One;
 
     use super::*;
@@ -536,6 +556,7 @@ mod tests {
             42,
             HashMap::new(),
             Arc::new(AsyncMutex::new(HashMap::new())),
+            "non-existent-ipfs-hash".to_string(),
         )
         .await;
 
@@ -577,6 +598,7 @@ mod tests {
             42,
             remote_attestations,
             Arc::new(AsyncMutex::new(local_attestations)),
+            "different-awesome-hash".to_string(),
         )
         .await;
 
@@ -604,6 +626,7 @@ mod tests {
             42,
             remote_attestations,
             Arc::new(AsyncMutex::new(local_attestations)),
+            "my-awesome-hash".to_string(),
         )
         .await;
 
@@ -645,6 +668,7 @@ mod tests {
             42,
             remote_attestations,
             Arc::new(AsyncMutex::new(local_attestations)),
+            "my-awesome-hash".to_string(),
         )
         .await;
 
