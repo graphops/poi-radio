@@ -344,8 +344,7 @@ pub async fn compare_attestations(
             attestation_block, remote_attestations, "Local attestation", local_attestation
         );
         Ok(ComparisonResult::Divergent(format!(
-            "❗ POIs don't match for subgraph {} on network {} at block {}!\n\nLocal attestation:\n{:#?}\n\nRemote attestations:\n{:#?}",
-            ipfs_hash, network_name, attestation_block, local_attestation, remote_attestations
+            "❗ POIs don't match for subgraph {ipfs_hash} on network {network_name} at block {attestation_block}!\n\nLocal attestation:\n{local_attestation:#?}\n\nRemote attestations:\n{remote_attestations:#?}"
         )))
     }
 }
