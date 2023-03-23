@@ -63,7 +63,7 @@ async fn main() {
         my_stake
     );
 
-    let generate_topics = partial!(generate_topics => config.network_subgraph.clone(), my_address.clone(), &config.topics);
+    let generate_topics = partial!(generate_topics => config.coverage.clone(), config.network_subgraph.clone(), my_address.clone(), config.graph_node_endpoint.clone(), &config.topics);
     let topics = generate_topics().await;
     info!("Found content topics for subscription: {:?}", topics);
 
@@ -142,7 +142,7 @@ async fn main() {
         info!(
             "Network statuses:\n{}: {:#?}\n{}: {:#?}\n{}: {}",
             "Chainhead blocks",
-            blocks_str,
+            blocks_str.clone(),
             "Number of gossip peers",
             GRAPHCAST_AGENT.get().unwrap().number_of_peers(),
             "Number of tracked deployments (topics)",
@@ -382,14 +382,17 @@ async fn main() {
             }
         }
         info!(
-            "Operation summary:\n{}: {}\n{} out of {} deployments cross checked\n{}: {}\n{}: {}\n{}: {:#?}",
+            "Operation summary for blocks {}:\n{}: {}\n{} out of {} deployments cross checked\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}",
+            blocks_str,
             "Number of messages sent",
             messages_sent.len(),
             match_strings.len() + divergent_strings.len(),
             num_topics,
             "Successful attestations",
             match_strings.len(),
-            "Topics without attestations",
+            "Total Topics without attestations",
+            num_topics - match_strings.len() - divergent_strings.len(),
+            "Topics reached comparison with no remote attestation",
             not_found_strings.len(),
             "Divergence",
             divergent_strings,

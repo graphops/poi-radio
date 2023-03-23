@@ -3,24 +3,29 @@ use ethers_contract::EthAbiType;
 use ethers_core::types::transaction::eip712::Eip712;
 use ethers_derive_eip712::*;
 use num_bigint::BigUint;
+use num_traits::Zero;
 use once_cell::sync::OnceCell;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::{self, Display},
     sync::{Arc, Mutex as SyncMutex},
 };
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, error, info, warn};
 
+use graphcast_sdk::config::CoverageLevel;
 use graphcast_sdk::{
     graphcast_agent::{
         message_typing::{get_indexer_stake, GraphcastMessage},
         waku_handling::WakuHandlingError,
         GraphcastAgent,
     },
-    graphql::{client_network::query_network_subgraph, client_registry::query_registry_indexer},
+    graphql::{
+        client_graph_node::get_indexing_statuses, client_network::query_network_subgraph,
+        client_registry::query_registry_indexer,
+    },
     networks::NetworkName,
     BlockPointer,
 };
@@ -106,19 +111,65 @@ pub async fn active_allocation_hashes(
         .indexer_allocations()
 }
 
-/// Generate default topics along with given static topics
+/// Generate content topics for all deployments that are syncing on Graph node
+/// filtering for deployments on an index node
+pub async fn syncing_deployment_hashes(
+    graph_node_endpoint: &str,
+    // graphQL filter
+) -> Vec<String> {
+    get_indexing_statuses(graph_node_endpoint.to_string())
+        .await
+        .map_err(|e| -> Vec<String> {
+            error!("Topic generation error: {}", e);
+            [].to_vec()
+        })
+        .unwrap()
+        .iter()
+        .filter(|&status| status.node != "removed")
+        .map(|s| s.subgraph.clone())
+        .collect::<Vec<String>>()
+}
+
+/// Generate a set of unique topics along with given static topics
 pub async fn generate_topics(
+    coverage: CoverageLevel,
     network_subgraph: String,
     indexer_address: String,
+    graph_node_endpoint: String,
     static_topics: &Vec<String>,
 ) -> Vec<String> {
-    let mut topics = active_allocation_hashes(&network_subgraph, indexer_address).await;
-    for topic in static_topics {
-        if !topics.contains(topic) {
-            topics.push(topic.clone());
+    match coverage {
+        CoverageLevel::Minimal => static_topics.to_vec(),
+        CoverageLevel::OnChain => {
+            let mut topics = active_allocation_hashes(&network_subgraph, indexer_address).await;
+            for topic in static_topics {
+                if !topics.contains(topic) {
+                    topics.push(topic.clone());
+                }
+            }
+            topics
+        }
+        CoverageLevel::Comprehensive => {
+            let active_topics: HashSet<String> =
+                active_allocation_hashes(&network_subgraph, indexer_address)
+                    .await
+                    .into_iter()
+                    .collect();
+            let additional_topics: HashSet<String> =
+                syncing_deployment_hashes(&graph_node_endpoint)
+                    .await
+                    .into_iter()
+                    .collect();
+
+            let mut combined_topics: Vec<String> = static_topics.clone();
+            combined_topics.extend(
+                active_topics
+                    .into_iter()
+                    .chain(additional_topics.into_iter()),
+            );
+            combined_topics
         }
     }
-    topics
 }
 
 /// This function processes the global messages map that we populate when
@@ -137,7 +188,18 @@ pub async fn process_messages(
         let sender = msg.recover_sender_address()?;
         let indexer_address =
             query_registry_indexer(registry_subgraph.to_string(), sender.clone()).await?;
-        let sender_stake = get_indexer_stake(indexer_address.clone(), network_subgraph).await?;
+        // If the indexer has active allocation on that topic then use their stake, otherwise simply include the msg with no stake weight
+        let indexer_allocations = query_network_subgraph(
+            network_subgraph.to_string().clone(),
+            indexer_address.clone(),
+        )
+        .await?
+        .indexer_allocations();
+        let sender_stake = if indexer_allocations.contains(&msg.identifier) {
+            get_indexer_stake(indexer_address.clone(), network_subgraph).await?
+        } else {
+            Zero::zero()
+        };
 
         // Check if there are existing attestations for the block
         let blocks = remote_attestations
@@ -403,7 +465,7 @@ pub async fn compare_attestations(
     } else {
         info!(
             "Number of nPOI submitted for block {}: {:#?}\n{}: {:#?}",
-            attestation_block, remote_attestations, "Local attestation", local_attestation
+            attestation_block, remote_attestations, "Local nPOI", &local_attestation.npoi
         );
         Ok(ComparisonResult::Divergent(format!(
             "❗ POIs don't match for subgraph {ipfs_hash} on network {network_name} at block {attestation_block}!\n\nLocal attestation:\n{local_attestation:#?}\n\nRemote attestations:\n{remote_attestations:#?}"
