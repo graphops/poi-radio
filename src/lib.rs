@@ -338,6 +338,7 @@ pub async fn compare_attestations(
     attestation_block: u64,
     remote: RemoteAttestationsMap,
     local: Arc<AsyncMutex<LocalAttestationsMap>>,
+    ipfs_hash: &str,
 ) -> Result<ComparisonResult, anyhow::Error> {
     debug!(
         "Comparing attestations:\nlocal: {:#?}\n remote: {:#?}",
@@ -345,14 +346,16 @@ pub async fn compare_attestations(
     );
 
     let local = local.lock().await;
-    let (ipfs_hash, blocks) = match local.iter().next() {
-        Some(pair) => pair,
+
+    let blocks = match local.get(ipfs_hash) {
+        Some(blocks) => blocks,
         None => {
             return Ok(ComparisonResult::NotFound(String::from(
                 "No local attestation found",
             )))
         }
     };
+
     let local_attestation = match blocks.get(&attestation_block) {
         Some(attestations) => attestations,
         None => {
@@ -612,6 +615,7 @@ mod tests {
             42,
             HashMap::new(),
             Arc::new(AsyncMutex::new(HashMap::new())),
+            "non-existent-ipfs-hash",
         )
         .await;
 
@@ -659,6 +663,7 @@ mod tests {
             42,
             remote_attestations,
             Arc::new(AsyncMutex::new(local_attestations)),
+            "different-awesome-hash",
         )
         .await;
 
@@ -686,6 +691,7 @@ mod tests {
             42,
             remote_attestations,
             Arc::new(AsyncMutex::new(local_attestations)),
+            "my-awesome-hash",
         )
         .await;
 
@@ -733,6 +739,7 @@ mod tests {
             42,
             remote_attestations,
             Arc::new(AsyncMutex::new(local_attestations)),
+            "my-awesome-hash",
         )
         .await;
 
