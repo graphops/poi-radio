@@ -1,8 +1,15 @@
 use chrono::Utc;
 
 use dotenv::dotenv;
-use graphcast_sdk::bots::{DiscordBot, SlackBot};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex as SyncMutex};
+use std::{thread::sleep, time::Duration};
+use tokio::sync::Mutex as AsyncMutex;
+use tracing::log::warn;
+use tracing::{debug, error, info};
+
 /// Radio specific query function to fetch Proof of Indexing for each allocated subgraph
+use graphcast_sdk::bots::{DiscordBot, SlackBot};
 use graphcast_sdk::config::Config;
 use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
 use graphcast_sdk::graphcast_agent::GraphcastAgent;
@@ -11,18 +18,14 @@ use graphcast_sdk::graphql::client_network::query_network_subgraph;
 use graphcast_sdk::graphql::client_registry::query_registry_indexer;
 use graphcast_sdk::networks::NetworkName;
 use graphcast_sdk::{build_wallet, determine_message_block, graphcast_id_address, BlockPointer};
-
 use poi_radio::{
-    attestation_handler, chainhead_block_str, clear_local_attestation, compare_attestations,
-    generate_topics, local_comparison_point, process_messages, save_local_attestation, Attestation,
-    ComparisonResult, LocalAttestationsMap, RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES,
+    attestation::{
+        clear_local_attestation, compare_attestations, local_comparison_point, process_messages,
+        save_local_attestation, Attestation, ComparisonResult, LocalAttestationsMap,
+    },
+    chainhead_block_str, generate_topics, radio_msg_handler, RadioPayloadMessage, GRAPHCAST_AGENT,
+    MESSAGES,
 };
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex as SyncMutex};
-use std::{thread::sleep, time::Duration};
-use tokio::sync::Mutex as AsyncMutex;
-use tracing::log::warn;
-use tracing::{debug, error, info};
 
 use crate::graphql::query_graph_node_poi;
 
@@ -92,7 +95,7 @@ async fn main() {
     GRAPHCAST_AGENT
         .get()
         .unwrap()
-        .register_handler(Arc::new(AsyncMutex::new(attestation_handler())))
+        .register_handler(Arc::new(AsyncMutex::new(radio_msg_handler())))
         .expect("Could not register handler");
 
     let mut network_chainhead_blocks: HashMap<NetworkName, BlockPointer> = HashMap::new();
@@ -219,12 +222,12 @@ async fn main() {
 
                 match poi_query(block_hash.clone(), message_block.try_into().unwrap()).await {
                     Ok(content) => {
-                        let attestation = Attestation {
-                            npoi: content.clone(),
-                            stake_weight: my_stake.clone(),
-                            senders: vec![my_address.clone()],
-                            timestamp: vec![time],
-                        };
+                        let attestation = Attestation::new(
+                            content.clone(),
+                            my_stake.clone(),
+                            vec![my_address.clone()],
+                            vec![time],
+                        );
 
                         save_local_attestation(
                             &mut *local_attestations.lock().await,
