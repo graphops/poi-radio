@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex as SyncMutex};
 use std::{thread::sleep, time::Duration};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::log::warn;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 /// Radio specific query function to fetch Proof of Indexing for each allocated subgraph
 use graphcast_sdk::bots::{DiscordBot, SlackBot};
@@ -207,56 +207,69 @@ async fn main() {
                 latest_block.number
             );
             if latest_block.number >= message_block {
-                let block_hash = match GRAPHCAST_AGENT
-                    .get()
-                    .unwrap()
-                    .get_block_hash(network_name.to_string(), message_block)
+                if local_attestations
+                    .lock()
                     .await
+                    .get(&id)
+                    .and_then(|blocks| blocks.get(&message_block))
+                    .is_none()
                 {
-                    Ok(hash) => hash,
-                    Err(e) => {
-                        error!("Failed to query graph node for the block hash: {e}");
-                        continue;
+                    let block_hash = match GRAPHCAST_AGENT
+                        .get()
+                        .unwrap()
+                        .get_block_hash(network_name.to_string(), message_block)
+                        .await
+                    {
+                        Ok(hash) => hash,
+                        Err(e) => {
+                            error!("Failed to query graph node for the block hash: {e}");
+                            continue;
+                        }
+                    };
+
+                    match poi_query(block_hash.clone(), message_block.try_into().unwrap()).await {
+                        Ok(content) => {
+                            let radio_message =
+                                RadioPayloadMessage::new(id.clone(), content.clone());
+                            match GRAPHCAST_AGENT
+                                .get()
+                                .unwrap()
+                                .send_message(
+                                    id.clone(),
+                                    network_name,
+                                    message_block,
+                                    Some(radio_message),
+                                )
+                                .await
+                            {
+                                Ok(id) => {
+                                    messages_sent.push(id.clone());
+
+                                    let attestation = Attestation::new(
+                                        content.clone(),
+                                        my_stake.clone(),
+                                        vec![my_address.clone()],
+                                        vec![time],
+                                    );
+
+                                    save_local_attestation(
+                                        &mut *local_attestations.lock().await,
+                                        attestation,
+                                        id.clone(),
+                                        message_block,
+                                    );
+                                }
+                                Err(e) => error!("{}: {}", "Failed to send message", e),
+                            };
+                        }
+                        Err(e) => error!("{}: {}", "Failed to query message content", e),
                     }
-                };
-
-                match poi_query(block_hash.clone(), message_block.try_into().unwrap()).await {
-                    Ok(content) => {
-                        let attestation = Attestation::new(
-                            content.clone(),
-                            my_stake.clone(),
-                            vec![my_address.clone()],
-                            vec![time],
-                        );
-
-                        save_local_attestation(
-                            &mut *local_attestations.lock().await,
-                            attestation,
-                            id.clone(),
-                            message_block,
-                        );
-
-                        let radio_message = RadioPayloadMessage::new(id.clone(), content.clone());
-                        match GRAPHCAST_AGENT
-                            .get()
-                            .unwrap()
-                            .send_message(
-                                id.clone(),
-                                network_name,
-                                message_block,
-                                Some(radio_message),
-                            )
-                            .await
-                        {
-                            Ok(id) => messages_sent.push(id),
-                            Err(e) => error!("{}: {}", "Failed to send message", e),
-                        };
-                    }
-                    Err(e) => error!("{}: {}", "Failed to query message content", e),
+                } else {
+                    trace!("Skipping sending message for block: {}", message_block);
                 }
             }
 
-            if time >= collect_window_end {
+            if time >= collect_window_end && message_block > compare_block {
                 let msgs = MESSAGES.get().unwrap().lock().unwrap().to_vec();
                 // Update to only process the identifier&compare_block related messages within the collection window
                 let msgs: Vec<GraphcastMessage<RadioPayloadMessage>> = msgs

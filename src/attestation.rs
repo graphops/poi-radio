@@ -89,7 +89,6 @@ pub async fn process_messages(
     network_subgraph: &str,
 ) -> Result<RemoteAttestationsMap, AttestationError> {
     let mut remote_attestations: RemoteAttestationsMap = HashMap::new();
-    let messages = AsyncMutex::new(messages.lock().await);
 
     for msg in messages.lock().await.iter() {
         let radio_msg = &msg.payload.clone().unwrap();
@@ -114,24 +113,24 @@ pub async fn process_messages(
             .iter_mut()
             .find(|a| a.npoi == radio_msg.payload_content());
 
-        match existing_attestation {
-            Some(existing_attestation) => {
-                Attestation::update(
-                    existing_attestation,
-                    indexer_address,
-                    sender_stake,
-                    msg.nonce,
-                )?;
+        if let Some(existing_attestation) = existing_attestation {
+            if let Ok(updated_attestation) = Attestation::update(
+                existing_attestation,
+                indexer_address,
+                sender_stake,
+                msg.nonce,
+            ) {
+                // Replace the existing_attestation with the updated_attestation
+                *existing_attestation = updated_attestation;
             }
-            None => {
-                // Unwrap is okay because bytes (Vec<u8>) is a valid utf-8 sequence
-                attestations.push(Attestation::new(
-                    radio_msg.payload_content().to_string(),
-                    sender_stake,
-                    vec![indexer_address],
-                    vec![msg.nonce],
-                ));
-            }
+        } else {
+            // Unwrap is okay because bytes (Vec<u8>) is a valid utf-8 sequence
+            attestations.push(Attestation::new(
+                radio_msg.payload_content().to_string(),
+                sender_stake,
+                vec![indexer_address],
+                vec![msg.nonce],
+            ));
         }
     }
     Ok(remote_attestations)
