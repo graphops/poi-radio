@@ -1,6 +1,7 @@
 use chrono::Utc;
 
 use dotenv::dotenv;
+use poi_radio::metrics::handle_serve_metrics;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::{thread::sleep, time::Duration};
@@ -101,6 +102,10 @@ async fn main() {
     let mut network_chainhead_blocks: HashMap<NetworkName, BlockPointer> = HashMap::new();
     let local_attestations: Arc<AsyncMutex<LocalAttestationsMap>> =
         Arc::new(AsyncMutex::new(HashMap::new()));
+
+    if let Some(port) = config.metrics_port {
+        tokio::spawn(handle_serve_metrics(port));
+    }
 
     // Main loop for sending messages, can factor out
     // and take radio specific query and parsing for radioPayload

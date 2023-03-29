@@ -13,6 +13,8 @@ use graphcast_sdk::{
     graphql::client_registry::query_registry_indexer,
     networks::NetworkName,
 };
+use once_cell::sync::Lazy;
+use prometheus::{IntCounterVec, IntGaugeVec, Opts};
 
 use crate::RadioPayloadMessage;
 
@@ -79,6 +81,31 @@ impl fmt::Display for Attestation {
 
 pub type RemoteAttestationsMap = HashMap<String, HashMap<u64, Vec<Attestation>>>;
 pub type LocalAttestationsMap = HashMap<String, HashMap<u64, Attestation>>;
+
+// Received (and validated) messages counter
+pub static VALIDATED_MESSAGES: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter_vec = IntCounterVec::new(
+        Opts::new("validated_messages", "Number of validated messages"),
+        &["deployment", "block_number"],
+    )
+    .expect("Failed to create validated_messages counter");
+    prometheus::register(Box::new(counter_vec.clone()))
+        .expect("Failed to register validated_messages counter");
+    counter_vec
+});
+
+// These are the subgraphs that are being actively cross-checked (the ones we are receiving remote attestations for)
+pub static ACTIVE_SUBGRAPHS: Lazy<IntGaugeVec> = Lazy::new(|| {
+    let opts = Opts::new(
+        "active_subgraphs",
+        "Number of subgraphs being actively crosschecked with other indexers",
+    );
+    let gauge_vec =
+        IntGaugeVec::new(opts, &["subgraph"]).expect("Failed to create active_subgraphs gauge");
+    prometheus::register(Box::new(gauge_vec.clone()))
+        .expect("Failed to register active_subgraphs gauge");
+    gauge_vec
+});
 
 /// This function processes the global messages map that we populate when
 /// messages are being received. It constructs the remote attestations
@@ -299,6 +326,17 @@ pub async fn compare_attestations(
 
     let mut remote_attestations = remote_attestations.clone();
     remote_attestations.sort_by(|a, b| a.stake_weight.partial_cmp(&b.stake_weight).unwrap());
+
+    let subgraph_gauge = ACTIVE_SUBGRAPHS.with_label_values(&[ipfs_hash]);
+
+    let senders: Vec<String> = remote_attestations
+        .clone()
+        .into_iter()
+        .flat_map(|attestation| attestation.senders)
+        .collect();
+
+    // The value is the total number of senders that are attesting for that subgraph
+    subgraph_gauge.set(senders.len().try_into().unwrap());
 
     if remote_attestations.len() > 1 {
         warn!(

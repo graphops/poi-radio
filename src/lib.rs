@@ -20,7 +20,9 @@ use graphcast_sdk::{
     BlockPointer,
 };
 
+use crate::attestation::VALIDATED_MESSAGES;
 pub mod attestation;
+pub mod metrics;
 
 /// A global static (singleton) instance of GraphcastAgent. It is useful to ensure that we have only one GraphcastAgent
 /// per Radio instance, so that we can keep track of state and more easily test our Radio application.
@@ -69,6 +71,9 @@ pub fn radio_msg_handler(
         // TODO: Handle the error case by incrementing a Prometheus "error" counter
         if let Ok(msg) = msg {
             debug!("Received message: {:?}", msg);
+            VALIDATED_MESSAGES
+                .with_label_values(&[&msg.identifier, &msg.block_number.to_string()])
+                .inc();
             MESSAGES.get().unwrap().lock().unwrap().push(msg);
         }
     }
