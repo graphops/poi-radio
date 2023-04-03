@@ -166,12 +166,11 @@ pub async fn process_messages(
 /// Determine the comparison pointer on both block and time based on the local attestations
 /// If they don't exist, then return default value that shall never be validated to trigger
 pub async fn local_comparison_point(
-    local_attestations: Arc<AsyncMutex<LocalAttestationsMap>>,
+    local_attestations: &LocalAttestationsMap,
     id: String,
     collect_window_duration: i64,
 ) -> (u64, i64) {
-    let local_attestation = local_attestations.lock().await;
-    if let Some(blocks_map) = local_attestation.get(&id) {
+    if let Some(blocks_map) = local_attestations.get(&id) {
         // Find the attestaion by the smallest block
         blocks_map
             .iter()
@@ -259,6 +258,7 @@ pub enum ComparisonResult {
     NotFound(String),
     Divergent(String),
     Match(String),
+    BuildFailed(String),
 }
 
 impl Display for ComparisonResult {
@@ -267,6 +267,7 @@ impl Display for ComparisonResult {
             ComparisonResult::NotFound(s) => write!(f, "NotFound: {s}"),
             ComparisonResult::Divergent(s) => write!(f, "Divergent: {s}"),
             ComparisonResult::Match(s) => write!(f, "Matched: {s}"),
+            ComparisonResult::BuildFailed(s) => write!(f, "Failed to build message: {s}"),
         }
     }
 }
@@ -770,7 +771,7 @@ mod tests {
         local_attestations.insert("hash2".to_string(), local_blocks);
         let local = Arc::new(AsyncMutex::new(local_attestations));
         let (block_num, collect_window_end) =
-            local_comparison_point(Arc::clone(&local), "hash".to_string(), 120).await;
+            local_comparison_point(&*local.lock().await, "hash".to_string(), 120).await;
 
         assert_eq!(block_num, 42);
         assert_eq!(collect_window_end, 122);
