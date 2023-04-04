@@ -110,7 +110,7 @@ pub async fn syncing_deployment_hashes(
         })
         .unwrap()
         .iter()
-        .filter(|&status| status.node != "removed")
+        .filter(|&status| status.node.is_some() && status.node != Some(String::from("removed")))
         .map(|s| s.subgraph.clone())
         .collect::<Vec<String>>()
 }
