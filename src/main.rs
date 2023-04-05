@@ -147,6 +147,7 @@ async fn main() {
         let num_topics = identifiers.len();
         //TODO: move to helper
         let blocks_str = chainhead_block_str(&network_chainhead_blocks);
+
         info!(
             "Network statuses:\n{}: {:#?}\n{}: {:#?}\n{}: {}",
             "Chainhead blocks",
@@ -156,8 +157,10 @@ async fn main() {
             "Number of tracked deployments (topics)",
             num_topics,
         );
+
         let mut messages_sent = vec![];
         let mut comparison_result_strings = vec![];
+
         for id in identifiers {
             let time = Utc::now().timestamp();
             // Get the indexing network of the deployment

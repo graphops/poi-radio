@@ -1,3 +1,4 @@
+pub use attestation::Attestation;
 use ethers_contract::EthAbiType;
 use ethers_core::types::transaction::eip712::Eip712;
 use ethers_derive_eip712::*;
@@ -10,6 +11,13 @@ use std::{
 };
 use tracing::{debug, error};
 
+// These types are not in main anymore
+pub type RemoteAttestationsMap = HashMap<String, HashMap<u64, Vec<Attestation>>>;
+pub type LocalAttestationsMap = HashMap<String, HashMap<u64, Attestation>>;
+
+pub type MessagesVec = OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>>;
+pub type MessagesArc = Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>;
+
 use graphcast_sdk::{config::CoverageLevel, graphql::client_graph_node::get_indexing_statuses};
 use graphcast_sdk::{
     graphcast_agent::{
@@ -21,7 +29,9 @@ use graphcast_sdk::{
 };
 
 use crate::attestation::VALIDATED_MESSAGES;
+
 pub mod attestation;
+pub mod graphql;
 pub mod metrics;
 
 /// A global static (singleton) instance of GraphcastAgent. It is useful to ensure that we have only one GraphcastAgent
@@ -110,7 +120,7 @@ pub async fn syncing_deployment_hashes(
         })
         .unwrap()
         .iter()
-        .filter(|&status| status.node.is_some() && status.node != Some(String::from("removed")))
+        .filter(|&status| status.node != "removed")
         .map(|s| s.subgraph.clone())
         .collect::<Vec<String>>()
 }

@@ -1,0 +1,16 @@
+version: "3"
+services:
+  basic-instance:
+    build: .
+    entrypoint: ["/usr/local/bin/integration-tests"]
+    command: ["--instance=basic"]
+
+  divergent-instance:
+    build: .
+    entrypoint: ["/usr/local/bin/integration-tests"]
+    command: ["--instance=divergent"]
+
+  invalid-payload-instance:
+    build: .
+    entrypoint: ["/usr/local/bin/integration-tests"]
+    command: ["--instance=invalid_payload"]

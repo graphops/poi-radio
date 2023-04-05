@@ -3,14 +3,15 @@ name = "poi-radio"
 version = "0.0.13"
 edition = "2021"
 authors = ["GraphOps (axiomatic-aardvark, hopeyen)"]
-description="POI Radio monitors subgraph data integrity in real time using Graphcast SDK"
-license="Apache-2.0"
-repository="https://github.com/graphops/poi-radio"
-keywords=["graphprotocol", "data-integrity", "Indexer", "waku", "p2p"]
-categories=["network-programming", "web-programming::http-client"]
+description = "POI Radio monitors subgraph data integrity in real time using Graphcast SDK"
+license = "Apache-2.0"
+repository = "https://github.com/graphops/poi-radio"
+keywords = ["graphprotocol", "data-integrity", "Indexer", "waku", "p2p"]
+categories = ["network-programming", "web-programming::http-client"]
+default-run = "poi-radio"
 
 [dependencies]
-graphcast-sdk = { git = "https://github.com/graphops/graphcast-sdk" }
+graphcast-sdk = { package = "graphcast-sdk", git = "https://github.com/graphops/graphcast-sdk", branch = "mocks" }
 prost = "0.11"
 once_cell = "1.15"
 chrono = "0.4"
@@ -41,8 +42,14 @@ tracing-subscriber = "0.3"
 autometrics = {version = "0.3.2", features = ["prometheus-exporter"]}
 axum = "0.6.6"
 prometheus = "0.13.3"
+clap = { version = "4.1.6", features = ["derive"] }
+
+[[bin]]
+name = "integration-tests"
+path = "integration-tests/src/main.rs"
 
 [dev-dependencies.cargo-husky]
 version = "1"
-default-features = false # Disable features which are enabled by default
+default-features = false
+# Disable features which are enabled by default
 features = ["precommit-hook", "run-cargo-fmt", "run-cargo-clippy"]

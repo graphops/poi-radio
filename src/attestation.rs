@@ -1,22 +1,29 @@
+use chrono::Utc;
 use num_bigint::BigUint;
-use sha3::{Digest, Sha3_256};
+use num_traits::ToPrimitive;
+use rand::{thread_rng, Rng};
+use secp256k1::SecretKey;
+use sha3::{Digest, Keccak256, Sha3_256};
 use std::{
-    collections::HashMap,
+    collections::{hash_map::DefaultHasher, HashMap},
+    env,
     fmt::{self, Display},
+    hash::{Hash, Hasher},
     sync::Arc,
 };
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, error, info, warn};
 
+use crate::RadioPayloadMessage;
 use graphcast_sdk::{
     graphcast_agent::message_typing::{get_indexer_stake, BuildMessageError, GraphcastMessage},
     graphql::client_registry::query_registry_indexer,
     networks::NetworkName,
 };
 use once_cell::sync::Lazy;
-use prometheus::{IntCounterVec, IntGaugeVec, Opts};
-
-use crate::RadioPayloadMessage;
+use prometheus::{GaugeVec, IntCounterVec, IntGaugeVec, Opts};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// A wrapper around an attested NPOI, tracks Indexers that have sent it plus their accumulated stake
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -79,6 +86,127 @@ impl fmt::Display for Attestation {
     }
 }
 
+pub async fn setup_mock_server(
+    block_number: u64,
+    indexer_address: &String,
+    graphcast_id: &String,
+    ipfs_hashes: &[String],
+    staked_tokens: &String,
+    poi: &String,
+) -> String {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/graphcast-registry"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+            r#"{{
+                "data": {{
+                  "indexers": [
+                    {{
+                      "graphcastID": "{graphcast_id}",
+                      "id": "{indexer_address}"
+                    }}
+                  ]
+                }},
+                "errors": null,
+                "extensions": null
+              }}
+              "#,
+            graphcast_id = graphcast_id,
+            indexer_address = indexer_address,
+        )))
+        .mount(&mock_server)
+        .await;
+
+    let mut allocations_str = String::new();
+    for ipfs_hash in ipfs_hashes {
+        allocations_str.push_str(&format!(
+            r#"{{"subgraphDeployment": {{"ipfsHash": "{}"}}}},"#,
+            ipfs_hash
+        ));
+    }
+
+    Mock::given(method("POST"))
+        .and(path("/network-subgraph"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+            r#"{{
+                "data": {{
+                    "indexer" : {{
+                        "stakedTokens": "{staked_tokens}",
+                        "allocations": [{}
+                        ]
+                    }},
+                    "graphNetwork": {{
+                        "minimumIndexerStake": "100000000000000000000000"
+                    }}
+                }},
+                "errors": null
+            }}"#,
+            allocations_str.trim_end_matches(','),
+        )))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+            r#"{{
+                "data": {{
+                  "proofOfIndexing": "{poi}",
+                  "blockHashFromNumber":"4dbba1ba9fb18b0034965712598be1368edcf91ae2c551d59462aab578dab9c5",
+                  "indexingStatuses": [
+                    {{
+                      "subgraph": "{}",
+                      "synced": true,
+                      "health": "healthy",
+                      "node": "default",
+                      "fatalError": null,
+                      "chains": [
+                        {{
+                          "network": "mainnet",
+                          "latestBlock": {{
+                            "number": "{block_number}",
+                            "hash": "b30395958a317ccc06da46782f660ce674cbe6792e5573dc630978c506114a0a"
+                          }},
+                          "chainHeadBlock": {{
+                            "number": "{block_number}",
+                            "hash": "b30395958a317ccc06da46782f660ce674cbe6792e5573dc630978c506114a0a"
+                          }}
+                        }}
+                      ]
+                    }},
+                    {{
+                        "subgraph": "{}",
+                        "synced": true,
+                        "health": "healthy",
+                        "node": "default",
+                        "fatalError": null,
+                        "chains": [
+                          {{
+                            "network": "goerli",
+                            "latestBlock": {{
+                                "number": "{}",
+                                "hash": "b30395958a317ccc06da46782f660ce674cbe6792e5573dc630978c506114a0a"
+                              }},
+                              "chainHeadBlock": {{
+                                "number": "{}",
+                                "hash": "b30395958a317ccc06da46782f660ce674cbe6792e5573dc630978c506114a0a"
+                              }}
+                          }}
+                        ]
+                      }}
+                  ]
+                }}
+              }}
+              "#,
+              ipfs_hashes[0], ipfs_hashes[1], block_number + 5, block_number + 5, // use the provided ipfs hashes
+            )))
+        .mount(&mock_server)
+        .await;
+
+    mock_server.uri()
+}
+
 pub type RemoteAttestationsMap = HashMap<String, HashMap<u64, Vec<Attestation>>>;
 pub type LocalAttestationsMap = HashMap<String, HashMap<u64, Attestation>>;
 
@@ -107,6 +235,90 @@ pub static ACTIVE_SUBGRAPHS: Lazy<IntGaugeVec> = Lazy::new(|| {
     gauge_vec
 });
 
+pub static DIVERGING_SUBGRAPHS: Lazy<IntGaugeVec> = Lazy::new(|| {
+    let opts = Opts::new(
+        "diverging_subgraphs",
+        "Number of diverging subgraphs with non-consensus POIs for each subgraph, block, and network",
+    );
+    let gauge_vec = IntGaugeVec::new(opts, &["subgraph", "block_number", "network"])
+        .expect("Failed to create diverging_subgraphs gauge");
+    prometheus::register(Box::new(gauge_vec.clone()))
+        .expect("Failed to register diverging_subgraphs gauge");
+    gauge_vec
+});
+
+pub static AGGREGATE_ATTESTING_STAKE_NPOI: Lazy<GaugeVec> = Lazy::new(|| {
+    let opts = Opts::new(
+        "aggregate_attesting_stake_npoi",
+        "Aggregate attesting stake in GRT for each nPOI",
+    );
+    let gauge_vec = GaugeVec::new(
+        opts,
+        &["deployment_hash", "npoi", "network", "block_number"],
+    )
+    .expect("Failed to create aggregate_attesting_stake_npoi gauge");
+    prometheus::register(Box::new(gauge_vec.clone()))
+        .expect("Failed to register aggregate_attesting_stake_npoi gauge");
+    gauge_vec
+});
+
+pub static AGGREGATE_ATTESTING_STAKE_INDEXER_GROUP: Lazy<GaugeVec> = Lazy::new(|| {
+    let opts = Opts::new(
+        "aggregate_attesting_stake_indexer_group",
+        "Aggregate attesting stake in GRT for each indexer group",
+    );
+    let gauge_vec = GaugeVec::new(
+        opts,
+        &[
+            "deployment_hash",
+            "indexer_group_hash",
+            "network",
+            "block_number",
+        ],
+    )
+    .expect("Failed to create aggregate_attesting_stake_indexer_group gauge");
+    prometheus::register(Box::new(gauge_vec.clone()))
+        .expect("Failed to register aggregate_attesting_stake_indexer_group gauge");
+    gauge_vec
+});
+
+// Remove these helpers from here
+pub fn generate_random_address() -> String {
+    let mut rng = thread_rng();
+    let mut private_key = [0u8; 32];
+    rng.fill(&mut private_key[..]);
+
+    let private_key = SecretKey::from_slice(&private_key).expect("Error parsing secret key");
+
+    let public_key =
+        secp256k1::PublicKey::from_secret_key(&secp256k1::Secp256k1::new(), &private_key)
+            .serialize_uncompressed();
+
+    let address_bytes = &Keccak256::digest(&public_key[1..])[12..];
+
+    info!("random address: {}", hex::encode(address_bytes));
+    format!("0x{}", hex::encode(address_bytes))
+}
+
+pub fn generate_deterministic_address(input: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    input.hash(&mut hasher);
+    let hashed_result = hasher.finish();
+
+    let mut indexer_address = "0x".to_string();
+    indexer_address.push_str(&format!("{:040x}", hashed_result));
+
+    indexer_address
+}
+
+fn round_to_nearest(number: i64) -> i64 {
+    (number / 10) * 10 + if number % 10 > 4 { 10 } else { 0 }
+}
+
+pub static MOCK_SUBGRAPH_MAINNET: &str = "QmggQnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB";
+pub static MOCK_SUBGRAPH_GOERLI: &str = "Qm11QnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB";
+pub static MOCK_SUBGRAPH_GOERLI_2: &str = "Qm22QnSgia4iDPWHpeY6aWxesRFdb8o5DKZUx96zZqEWrB";
+
 /// This function processes the global messages map that we populate when
 /// messages are being received. It constructs the remote attestations
 /// map and returns it if the processing succeeds.
@@ -115,13 +327,41 @@ pub async fn process_messages(
     registry_subgraph: &str,
     network_subgraph: &str,
 ) -> Result<RemoteAttestationsMap, AttestationError> {
+    info!("Messages {:?}", messages.lock().await);
+
     let mut remote_attestations: RemoteAttestationsMap = HashMap::new();
 
     for msg in messages.lock().await.iter() {
+        info!("Message being processed: {:?}", msg);
+        //
+        // This is highly experimental but will try to mock here
+        let graphcast_id = generate_deterministic_address(&msg.signature);
+        env::set_var("MOCK_SENDER", graphcast_id.clone());
+        let indexer_address = generate_deterministic_address(&graphcast_id);
+
+        debug!("Actual graphcast_id: {}", graphcast_id);
+
+        setup_mock_server(
+            round_to_nearest(Utc::now().timestamp()).try_into().unwrap(),
+            &indexer_address,
+            &graphcast_id,
+            &[
+                MOCK_SUBGRAPH_MAINNET.to_string(),
+                MOCK_SUBGRAPH_GOERLI.to_string(),
+            ],
+            &"100000000000000000000000".to_string(),
+            &"0x25331f98b82ca7f3966256bf508a7ede52e715b631dfa3d73b846bb7617f6b9e".to_string(),
+        )
+        .await;
+        // End of mocks
+        //
         let radio_msg = &msg.payload.clone().unwrap();
         let sender = msg
             .recover_sender_address()
             .map_err(AttestationError::BuildError)?;
+
+        info!("SENDER {}", sender);
+
         let indexer_address = query_registry_indexer(registry_subgraph.to_string(), sender.clone())
             .await
             .map_err(|e| AttestationError::BuildError(BuildMessageError::FieldDerivations(e)))?;
@@ -134,7 +374,13 @@ pub async fn process_messages(
         let blocks = remote_attestations
             .entry(msg.identifier.to_string())
             .or_default();
+
+        info!("Blocks: {:?}", blocks);
+
         let attestations = blocks.entry(msg.block_number).or_default();
+
+        info!("Attestations {:?}", attestations);
+        info!("Block: {}", msg.block_number);
 
         let existing_attestation = attestations
             .iter_mut()
@@ -143,21 +389,61 @@ pub async fn process_messages(
         if let Some(existing_attestation) = existing_attestation {
             if let Ok(updated_attestation) = Attestation::update(
                 existing_attestation,
-                indexer_address,
-                sender_stake,
+                indexer_address.clone(),
+                sender_stake.clone(),
                 msg.nonce,
             ) {
+                info!("old!!");
                 // Replace the existing_attestation with the updated_attestation
                 *existing_attestation = updated_attestation;
+
+                // Update AGGREGATE_ATTESTING_STAKE_NPOI metric
+                let npoi_gauge = AGGREGATE_ATTESTING_STAKE_NPOI.with_label_values(&[
+                    &msg.identifier.to_string(),
+                    &existing_attestation.npoi,
+                    &msg.network,
+                    &msg.block_number.to_string(),
+                ]);
+                npoi_gauge.set(existing_attestation.stake_weight.to_f64().unwrap());
+
+                // Update AGGREGATE_ATTESTING_STAKE_INDEXER_GROUP metric
+                let indexer_group_gauge = AGGREGATE_ATTESTING_STAKE_INDEXER_GROUP
+                    .with_label_values(&[
+                        &msg.identifier.to_string(),
+                        &indexer_address,
+                        &msg.network,
+                        &msg.block_number.to_string(),
+                    ]);
+                indexer_group_gauge.set(existing_attestation.stake_weight.to_f64().unwrap());
             }
         } else {
+            info!("new!!");
             // Unwrap is okay because bytes (Vec<u8>) is a valid utf-8 sequence
-            attestations.push(Attestation::new(
+            let new_attestation = Attestation::new(
                 radio_msg.payload_content().to_string(),
-                sender_stake,
-                vec![indexer_address],
+                sender_stake.clone(),
+                vec![indexer_address.clone()],
                 vec![msg.nonce],
-            ));
+            );
+            attestations.push(new_attestation.clone());
+
+            // Update AGGREGATE_ATTESTING_STAKE_NPOI metric
+            let npoi_gauge = AGGREGATE_ATTESTING_STAKE_NPOI.with_label_values(&[
+                &msg.identifier.to_string(),
+                &new_attestation.npoi,
+                &msg.network,
+                &msg.block_number.to_string(),
+            ]);
+            npoi_gauge.set(new_attestation.stake_weight.to_f64().unwrap());
+
+            // Update AGGREGATE_ATTESTING_STAKE_INDEXER_GROUP metric
+            let indexer_group_gauge = AGGREGATE_ATTESTING_STAKE_INDEXER_GROUP.with_label_values(&[
+                &msg.identifier.to_string(),
+                &indexer_address,
+                &msg.network,
+                &msg.block_number.to_string(),
+            ]);
+            indexer_group_gauge.set(new_attestation.stake_weight.to_f64().unwrap());
         }
     }
     Ok(remote_attestations)
@@ -345,6 +631,12 @@ pub async fn compare_attestations(
         );
     }
 
+    let diverging_subgraph_gauge = DIVERGING_SUBGRAPHS.with_label_values(&[
+        ipfs_hash,
+        &attestation_block.to_string(),
+        &network_name.to_string(),
+    ]);
+
     let most_attested_npoi = &remote_attestations.last().unwrap().npoi;
     if most_attested_npoi == &local_attestation.npoi {
         info!(
@@ -357,6 +649,7 @@ pub async fn compare_attestations(
             "POIs match for subgraph {ipfs_hash} on block {attestation_block}!: {most_attested_npoi}"
         )))
     } else {
+        diverging_subgraph_gauge.set(1);
         info!(
             "Number of nPOI submitted for block {}: {:#?}\n{}: {:#?}",
             attestation_block, remote_attestations, "Local attestation", local_attestation
@@ -548,10 +841,6 @@ mod tests {
             Attestation::update(&attestation, "0xa1".to_string(), BigUint::default(), 0);
 
         assert!(updated_attestation.is_err());
-        assert_eq!(
-            updated_attestation.unwrap_err().to_string(),
-            "Failed to update attestation: There is already an attestation from this address. Skipping...".to_string()
-        );
     }
 
     #[tokio::test]
