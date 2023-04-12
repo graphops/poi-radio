@@ -1,3 +1,4 @@
+use async_graphql::SimpleObject;
 use attestation::AttestationError;
 use autometrics::autometrics;
 use ethers_contract::EthAbiType;
@@ -8,8 +9,12 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex as SyncMutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex as SyncMutex,
+    },
 };
+use tokio::signal;
 use tracing::{error, trace};
 
 use graphcast_sdk::{
@@ -29,6 +34,7 @@ use crate::metrics::{CACHED_MESSAGES, VALIDATED_MESSAGES};
 
 pub mod attestation;
 pub mod metrics;
+pub mod server;
 
 /// A global static (singleton) instance of GraphcastAgent. It is useful to ensure that we have only one GraphcastAgent
 /// per Radio instance, so that we can keep track of state and more easily test our Radio application.
@@ -41,14 +47,13 @@ pub static GRAPHCAST_AGENT: OnceCell<GraphcastAgent> = OnceCell::new();
 pub static MESSAGES: OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>> =
     OnceCell::new();
 
-#[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize)]
+#[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize, PartialEq, SimpleObject)]
 #[eip712(
     name = "Graphcast POI Radio",
     version = "0",
     chain_id = 1,
     verifying_contract = "0xc944e90c64b2c07662a292be6244bdf05cda44a7"
 )]
-#[derive(PartialEq)]
 pub struct RadioPayloadMessage {
     #[prost(string, tag = "1")]
     pub identifier: String,
@@ -190,6 +195,34 @@ pub fn chainhead_block_str(
     }
     blocks_str.push_str(" }");
     blocks_str
+}
+
+/// Graceful shutdown when receive signal
+pub async fn shutdown_signal(running_program: Arc<AtomicBool>) {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {println!("Shutting down server...");},
+        _ = terminate => {},
+    }
+
+    running_program.store(false, Ordering::SeqCst);
+    opentelemetry::global::shutdown_tracer_provider();
 }
 
 #[derive(Debug, thiserror::Error)]

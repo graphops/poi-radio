@@ -3,12 +3,14 @@ use chrono::Utc;
 use dotenv::dotenv;
 use std::cmp::max;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::{thread::sleep, time::Duration};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::log::warn;
 use tracing::{debug, error, info, trace};
 
+use crate::graphql::query_graph_node_poi;
 use graphcast_sdk::config::Config;
 use graphcast_sdk::graphcast_agent::message_typing::{BuildMessageError, GraphcastMessage};
 use graphcast_sdk::graphcast_agent::{GraphcastAgent, GraphcastAgentError};
@@ -22,6 +24,8 @@ use graphcast_sdk::{
 };
 use poi_radio::attestation::log_summary;
 use poi_radio::metrics::{handle_serve_metrics, CACHED_MESSAGES};
+use poi_radio::server::run_server;
+use poi_radio::shutdown_signal;
 use poi_radio::OperationError;
 use poi_radio::{
     attestation::{
@@ -32,10 +36,10 @@ use poi_radio::{
     MESSAGES,
 };
 
-use crate::graphql::query_graph_node_poi;
-
+pub mod attestation;
 mod graphql;
 pub mod metrics;
+pub mod server;
 
 #[macro_use]
 extern crate partial_application;
@@ -116,9 +120,22 @@ async fn main() {
     let local_attestations: Arc<AsyncMutex<LocalAttestationsMap>> =
         Arc::new(AsyncMutex::new(HashMap::new()));
 
+    let running = Arc::new(AtomicBool::new(true));
+    if let Some(port) = config.server_port {
+        tokio::spawn(run_server(
+            config
+                .server_host
+                .clone()
+                .unwrap_or(String::from("0.0.0.0")),
+            port,
+            running.clone(),
+            Arc::clone(&local_attestations),
+        ));
+    }
+
     // Main loop for sending messages, can factor out
     // and take radio specific query and parsing for radioPayload
-    loop {
+    while running.load(Ordering::SeqCst) {
         let network_chainhead_blocks: Arc<AsyncMutex<HashMap<NetworkName, BlockPointer>>> =
             Arc::new(AsyncMutex::new(HashMap::new()));
         let local_attestations = Arc::clone(&local_attestations);

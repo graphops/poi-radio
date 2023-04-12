@@ -1,3 +1,4 @@
+use async_graphql::SimpleObject;
 use autometrics::autometrics;
 use chrono::Utc;
 
@@ -27,7 +28,7 @@ use crate::{
 };
 
 /// A wrapper around an attested NPOI, tracks Indexers that have sent it plus their accumulated stake
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, SimpleObject)]
 pub struct Attestation {
     pub npoi: String,
     pub stake_weight: i64,
@@ -85,6 +86,30 @@ impl fmt::Display for Attestation {
 
 pub type RemoteAttestationsMap = HashMap<String, HashMap<u64, Vec<Attestation>>>;
 pub type LocalAttestationsMap = HashMap<String, HashMap<u64, Attestation>>;
+
+#[derive(SimpleObject)]
+pub struct AttestationEntry {
+    pub deployment: String,
+    pub block_number: u64,
+    pub attestation: Attestation,
+}
+
+pub async fn attestations_to_vec(
+    attestations: &Arc<AsyncMutex<LocalAttestationsMap>>,
+) -> Vec<AttestationEntry> {
+    attestations
+        .lock()
+        .await
+        .iter()
+        .flat_map(|(npoi, inner_map)| {
+            inner_map.iter().map(move |(blk, att)| AttestationEntry {
+                deployment: npoi.clone(),
+                block_number: *blk,
+                attestation: att.clone(),
+            })
+        })
+        .collect()
+}
 
 /// This function processes the global messages map that we populate when
 /// messages are being received. It constructs the remote attestations
