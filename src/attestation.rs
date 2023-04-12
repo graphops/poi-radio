@@ -1,6 +1,6 @@
 use autometrics::autometrics;
 use chrono::Utc;
-use num_bigint::BigUint;
+
 use num_traits::Zero;
 use sha3::{Digest, Sha3_256};
 use std::{
@@ -30,7 +30,7 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Attestation {
     pub npoi: String,
-    pub stake_weight: BigUint,
+    pub stake_weight: i64,
     pub senders: Vec<String>,
     pub sender_group_hash: String,
     pub timestamp: Vec<i64>,
@@ -38,18 +38,13 @@ pub struct Attestation {
 
 #[autometrics]
 impl Attestation {
-    pub fn new(
-        npoi: String,
-        stake_weight: BigUint,
-        senders: Vec<String>,
-        timestamp: Vec<i64>,
-    ) -> Self {
+    pub fn new(npoi: String, stake_weight: f32, senders: Vec<String>, timestamp: Vec<i64>) -> Self {
         let addresses = &mut senders.clone();
         sort_addresses(addresses);
         let sender_group_hash = hash_addresses(addresses);
         Attestation {
             npoi,
-            stake_weight,
+            stake_weight: stake_weight as i64,
             senders,
             sender_group_hash,
             timestamp,
@@ -60,7 +55,7 @@ impl Attestation {
     pub fn update(
         base: &Self,
         address: String,
-        stake: BigUint,
+        stake: f32,
         timestamp: i64,
     ) -> Result<Self, AttestationError> {
         if base.senders.contains(&address) {
@@ -70,7 +65,7 @@ impl Attestation {
         } else {
             Ok(Self::new(
                 base.npoi.clone(),
-                base.stake_weight.clone() + stake,
+                (base.stake_weight as f32) + stake,
                 [base.senders.clone(), vec![address]].concat(),
                 [base.timestamp.clone(), vec![timestamp]].concat(),
             ))
@@ -217,7 +212,7 @@ pub fn update_blocks(
     block_number: u64,
     blocks: &HashMap<u64, Vec<Attestation>>,
     npoi: String,
-    stake: BigUint,
+    stake: f32,
     address: String,
     timestamp: i64,
 ) -> HashMap<u64, Vec<Attestation>> {
@@ -609,7 +604,6 @@ pub enum AttestationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use num_traits::One;
 
     #[test]
     fn test_update_blocks() {
@@ -618,7 +612,7 @@ mod tests {
             42,
             vec![Attestation::new(
                 "default".to_string(),
-                BigUint::default(),
+                0.0,
                 Vec::new(),
                 Vec::new(),
             )],
@@ -627,7 +621,7 @@ mod tests {
             42,
             &blocks,
             "awesome-npoi".to_string(),
-            BigUint::default(),
+            0.0,
             "0xadd3".to_string(),
             1,
         );
@@ -642,13 +636,13 @@ mod tests {
     fn test_sort_sender_addresses_unique() {
         let attestation = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::one(),
+            1.0,
             vec!["0xaac5349585cbbf924026d25a520ffa9e8b51a39b".to_string()],
             vec![1],
         );
         let attestation2 = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::one(),
+            1.0,
             vec!["0xbbc5349585cbbf924026d25a520ffa9e8b51a39b".to_string()],
             vec![1],
         );
@@ -662,7 +656,7 @@ mod tests {
     fn test_sort_sender_addresses() {
         let attestation = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::one(),
+            1.0,
             vec![
                 "0xaac5349585cbbf924026d25a520ffa9e8b51a39b".to_string(),
                 "0xbbc5349585cbbf924026d25a520ffa9e8b51a39b".to_string(),
@@ -671,7 +665,7 @@ mod tests {
         );
         let attestation2 = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::one(),
+            1.0,
             vec![
                 "0xbbc5349585cbbf924026d25a520ffa9e8b51a39b".to_string(),
                 "0xaac5349585cbbf924026d25a520ffa9e8b51a39b".to_string(),
@@ -688,21 +682,21 @@ mod tests {
     fn test_attestation_sorting() {
         let attestation1 = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::default(),
+            0.0,
             vec!["0xa1".to_string()],
             vec![0],
         );
 
         let attestation2 = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::default(),
+            0.0,
             vec!["0xa2".to_string()],
             vec![1],
         );
 
         let attestation3 = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::one(),
+            1.0,
             vec!["0xa3".to_string()],
             vec![2],
         );
@@ -711,7 +705,7 @@ mod tests {
 
         attestations.sort_by(|a, b| a.stake_weight.partial_cmp(&b.stake_weight).unwrap());
 
-        assert_eq!(attestations.last().unwrap().stake_weight, BigUint::one());
+        assert_eq!(attestations.last().unwrap().stake_weight, 1);
         assert_eq!(
             attestations.last().unwrap().senders.first().unwrap(),
             &"0xa3".to_string()
@@ -723,19 +717,15 @@ mod tests {
     fn test_attestation_update_success() {
         let attestation = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::default(),
+            0.0,
             vec!["0xa1".to_string()],
             vec![2],
         );
 
-        let updated_attestation =
-            Attestation::update(&attestation, "0xa2".to_string(), BigUint::one(), 1);
+        let updated_attestation = Attestation::update(&attestation, "0xa2".to_string(), 1.0, 1);
 
         assert!(updated_attestation.is_ok());
-        assert_eq!(
-            updated_attestation.as_ref().unwrap().stake_weight,
-            BigUint::one()
-        );
+        assert_eq!(updated_attestation.as_ref().unwrap().stake_weight, 1);
         assert_eq!(updated_attestation.unwrap().timestamp, [2, 1]);
     }
 
@@ -743,13 +733,12 @@ mod tests {
     fn test_attestation_update_fail() {
         let attestation = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::default(),
+            0.0,
             vec!["0xa1".to_string()],
             vec![0],
         );
 
-        let updated_attestation =
-            Attestation::update(&attestation, "0xa1".to_string(), BigUint::default(), 0);
+        let updated_attestation = Attestation::update(&attestation, "0xa1".to_string(), 0.0, 0);
 
         assert!(updated_attestation.is_err());
         assert_eq!(
@@ -785,7 +774,7 @@ mod tests {
             42,
             vec![Attestation::new(
                 "awesome-npoi".to_string(),
-                BigUint::default(),
+                0.0,
                 vec!["0xa1".to_string()],
                 vec![1],
             )],
@@ -793,12 +782,7 @@ mod tests {
 
         local_blocks.insert(
             42,
-            Attestation::new(
-                "awesome-npoi".to_string(),
-                BigUint::default(),
-                Vec::new(),
-                vec![0],
-            ),
+            Attestation::new("awesome-npoi".to_string(), 0.0, Vec::new(), vec![0]),
         );
 
         let mut remote_attestations: HashMap<String, HashMap<u64, Vec<Attestation>>> =
@@ -861,7 +845,7 @@ mod tests {
             42,
             vec![Attestation::new(
                 "awesome-npoi".to_string(),
-                BigUint::default(),
+                0.0,
                 vec!["0xa1".to_string()],
                 vec![0],
             )],
@@ -869,12 +853,7 @@ mod tests {
 
         local_blocks.insert(
             42,
-            Attestation::new(
-                "awesome-npoi".to_string(),
-                BigUint::default(),
-                Vec::new(),
-                vec![0],
-            ),
+            Attestation::new("awesome-npoi".to_string(), 0.0, Vec::new(), vec![0]),
         );
 
         let mut remote_attestations: HashMap<String, HashMap<u64, Vec<Attestation>>> =
@@ -908,21 +887,21 @@ mod tests {
         let mut local_blocks: HashMap<u64, Attestation> = HashMap::new();
         let attestation1 = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::default(),
+            0.0,
             vec!["0xa1".to_string()],
             vec![0],
         );
 
         let attestation2 = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::default(),
+            0.0,
             vec!["0xa2".to_string()],
             vec![1],
         );
 
         let attestation3 = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::one(),
+            1.0,
             vec!["0xa3".to_string()],
             vec![2],
         );
@@ -948,21 +927,21 @@ mod tests {
         let mut local_blocks: HashMap<u64, Attestation> = HashMap::new();
         let attestation1 = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::default(),
+            0.0,
             vec!["0xa1".to_string()],
             vec![2],
         );
 
         let attestation2 = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::default(),
+            0.0,
             vec!["0xa2".to_string()],
             vec![4],
         );
 
         let attestation3 = Attestation::new(
             "awesome-npoi".to_string(),
-            BigUint::one(),
+            1.0,
             vec!["0xa3".to_string()],
             vec![6],
         );
