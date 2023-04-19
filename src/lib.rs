@@ -1,3 +1,6 @@
+use async_graphql::SimpleObject;
+use attestation::AttestationError;
+use autometrics::autometrics;
 use ethers_contract::EthAbiType;
 use ethers_core::types::transaction::eip712::Eip712;
 use ethers_derive_eip712::*;
@@ -6,11 +9,18 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex as SyncMutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex as SyncMutex,
+    },
 };
-use tracing::{debug, error};
+use tokio::signal;
+use tracing::{error, trace};
 
-use graphcast_sdk::{config::CoverageLevel, graphql::client_graph_node::get_indexing_statuses};
+use graphcast_sdk::{
+    config::CoverageLevel, graphcast_agent::GraphcastAgentError,
+    graphql::client_graph_node::get_indexing_statuses,
+};
 use graphcast_sdk::{
     graphcast_agent::{
         message_typing::GraphcastMessage, waku_handling::WakuHandlingError, GraphcastAgent,
@@ -20,9 +30,11 @@ use graphcast_sdk::{
     BlockPointer,
 };
 
-use crate::attestation::VALIDATED_MESSAGES;
+use crate::metrics::{CACHED_MESSAGES, VALIDATED_MESSAGES};
+
 pub mod attestation;
 pub mod metrics;
+pub mod server;
 
 /// A global static (singleton) instance of GraphcastAgent. It is useful to ensure that we have only one GraphcastAgent
 /// per Radio instance, so that we can keep track of state and more easily test our Radio application.
@@ -35,7 +47,7 @@ pub static GRAPHCAST_AGENT: OnceCell<GraphcastAgent> = OnceCell::new();
 pub static MESSAGES: OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>> =
     OnceCell::new();
 
-#[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize)]
+#[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize, PartialEq, SimpleObject)]
 #[eip712(
     name = "Graphcast POI Radio",
     version = "0",
@@ -65,16 +77,26 @@ impl RadioPayloadMessage {
 /// Custom callback for handling the validated GraphcastMessage, in this case we only save the messages to a local store
 /// to process them at a later time. This is required because for the processing we use async operations which are not allowed
 /// in the handler.
+#[autometrics]
 pub fn radio_msg_handler(
 ) -> impl Fn(Result<GraphcastMessage<RadioPayloadMessage>, WakuHandlingError>) {
     |msg: Result<GraphcastMessage<RadioPayloadMessage>, WakuHandlingError>| {
         // TODO: Handle the error case by incrementing a Prometheus "error" counter
         if let Ok(msg) = msg {
-            debug!("Received message: {:?}", msg);
-            VALIDATED_MESSAGES
-                .with_label_values(&[&msg.identifier, &msg.block_number.to_string()])
-                .inc();
+            trace!("Received message: {:?}", msg);
+            let id = msg.identifier.clone();
+            VALIDATED_MESSAGES.with_label_values(&[&id]).inc();
             MESSAGES.get().unwrap().lock().unwrap().push(msg);
+            CACHED_MESSAGES.with_label_values(&[&id]).set(
+                MESSAGES
+                    .get()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .len()
+                    .try_into()
+                    .unwrap(),
+            );
         }
     }
 }
@@ -116,6 +138,7 @@ pub async fn syncing_deployment_hashes(
 }
 
 /// Generate a set of unique topics along with given static topics
+#[autometrics]
 pub async fn generate_topics(
     coverage: CoverageLevel,
     network_subgraph: String,
@@ -157,6 +180,8 @@ pub async fn generate_topics(
     }
 }
 
+/// This function returns the string representation of a set of network mapped to their chainhead blocks
+#[autometrics]
 pub fn chainhead_block_str(
     network_chainhead_blocks: &HashMap<NetworkName, BlockPointer>,
 ) -> String {
@@ -170,6 +195,63 @@ pub fn chainhead_block_str(
     }
     blocks_str.push_str(" }");
     blocks_str
+}
+
+/// Graceful shutdown when receive signal
+pub async fn shutdown_signal(running_program: Arc<AtomicBool>) {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {println!("Shutting down server...");},
+        _ = terminate => {},
+    }
+
+    running_program.store(false, Ordering::SeqCst);
+    opentelemetry::global::shutdown_tracer_provider();
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum OperationError {
+    #[error("Send message trigger isn't met: {0}")]
+    SendTrigger(String),
+    #[error("Message sent already, skip to avoid duplicates: {0}")]
+    SkipDuplicate(String),
+    #[error("Comparison trigger isn't met: {0}")]
+    CompareTrigger(String, u64, String),
+    #[error("Agent encountered problems: {0}")]
+    Agent(GraphcastAgentError),
+    #[error("Attestation failure: {0}")]
+    Attestation(AttestationError),
+    #[error("Others: {0}")]
+    Others(String),
+}
+
+impl OperationError {
+    pub fn clone_with_inner(&self) -> Self {
+        match self {
+            OperationError::SendTrigger(msg) => OperationError::SendTrigger(msg.clone()),
+            OperationError::SkipDuplicate(msg) => OperationError::SkipDuplicate(msg.clone()),
+            OperationError::CompareTrigger(d, b, m) => {
+                OperationError::CompareTrigger(d.clone(), *b, m.clone())
+            }
+            e => OperationError::Others(e.to_string()),
+        }
+    }
 }
 
 #[cfg(test)]
