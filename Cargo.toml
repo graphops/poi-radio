@@ -1,6 +1,6 @@
 [package]
 name = "poi-radio"
-version = "0.1.3"
+version = "0.2.0"
 edition = "2021"
 authors = ["GraphOps (axiomatic-aardvark, hopeyen)"]
 description = "POI Radio monitors subgraph data integrity in real time using Graphcast SDK"
@@ -11,7 +11,7 @@ categories = ["network-programming", "web-programming::http-client"]
 default-run = "poi-radio"
 
 [dependencies]
-graphcast-sdk = "0.1.2"
+graphcast-sdk = "0.2"
 prost = "0.11"
 once_cell = "1.15"
 chrono = "0.4"
