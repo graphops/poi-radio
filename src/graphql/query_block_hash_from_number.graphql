@@ -1,6 +1,3 @@
 query BlockHashFromNumber($network: String!, $blockNumber: Int!) {
-    blockHashFromNumber(
-      network: $network
-      blockNumber: $blockNumber
-    )
+  blockHashFromNumber(network: $network, blockNumber: $blockNumber)
 }

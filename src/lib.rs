@@ -33,8 +33,11 @@ use graphcast_sdk::{
 use crate::metrics::{CACHED_MESSAGES, VALIDATED_MESSAGES};
 
 pub mod attestation;
+pub mod graphql;
 pub mod metrics;
 pub mod server;
+
+pub type MessagesVec = OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>>;
 
 /// A global static (singleton) instance of GraphcastAgent. It is useful to ensure that we have only one GraphcastAgent
 /// per Radio instance, so that we can keep track of state and more easily test our Radio application.

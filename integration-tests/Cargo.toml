@@ -1,0 +1,17 @@
+[package]
+name = "integration-tests"
+version = "0.0.1"
+edition = "2021"
+authors = ["GraphOps (axiomatic-aardvark, hopeyen)"]
+description = "POI Radio integration tests"
+license = "Apache-2.0"
+repository = "https://github.com/graphops/poi-radio-e2e-tests"
+keywords = ["graphprotocol", "data-integrity", "Indexer", "waku", "p2p"]
+categories = ["network-programming", "web-programming::http-client"]
+
+[dependencies]
+
+[dev-dependencies.cargo-husky]
+version = "1"
+default-features = false
+features = ["precommit-hook", "run-cargo-fmt", "run-cargo-clippy"]

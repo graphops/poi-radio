@@ -1,5 +1,4 @@
-use axum::{extract::Extension, middleware, routing::get, Router, Server};
-use std::future::ready;
+use axum::{extract::Extension, routing::get, Router, Server};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
@@ -9,14 +8,15 @@ use tracing::info;
 
 use crate::attestation::LocalAttestationsMap;
 use crate::server::model::{build_schema, POIRadioContext};
-use crate::server::observability::{create_prometheus_recorder, track_metrics};
 use crate::server::routes::{graphql_handler, graphql_playground, health};
 use crate::shutdown_signal;
 
 pub mod model;
-pub mod observability;
 pub mod routes;
 
+/// Run HTTP server to provide API services
+/// Set up the routes for a radio health endpoint at `/health`
+/// and a versioned GraphQL endpoint at `api/v1/graphql`
 pub async fn run_server(
     host: String,
     port: u16,
@@ -28,22 +28,17 @@ pub async fn run_server(
 
     let schema = build_schema(Arc::clone(&context)).await;
 
-    let prometheus_recorder = create_prometheus_recorder();
-
     info!("API Service starting at {host}:{port}");
 
     let app = Router::new()
         .route("/health", get(health))
-        .route("/metrics", get(move || ready(prometheus_recorder.render())))
         .route(
             "/api/v1/graphql",
             get(graphql_playground).post(graphql_handler),
         )
-        .route_layer(middleware::from_fn(track_metrics))
         .layer(Extension(schema))
         .layer(Extension(context));
-    let addr =
-        SocketAddr::from_str(&format!("{}:{}", host, port)).expect("Start Prometheus metrics");
+    let addr = SocketAddr::from_str(&format!("{}:{}", host, port)).expect("Start HTTP Service");
 
     Server::bind(&addr)
         .serve(app.into_make_service())

@@ -198,7 +198,7 @@ pub async fn process_messages(
     Ok(remote_attestations)
 }
 
-fn combine_senders(attestations: &[Attestation]) -> Vec<String> {
+pub fn combine_senders(attestations: &[Attestation]) -> Vec<String> {
     <&[Attestation]>::clone(&attestations)
         .iter()
         .flat_map(|attestation| attestation.senders.clone())
@@ -518,6 +518,7 @@ fn hash_addresses(addresses: &[String]) -> String {
 }
 
 /// This function logs the operational summary of the main event loop
+#[allow(clippy::too_many_arguments)]
 pub async fn log_summary(
     blocks_str: String,
     num_topics: usize,

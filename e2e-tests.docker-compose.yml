@@ -1,0 +1,62 @@
+version: "3"
+services:
+  basic-instance:
+    build:
+      context: .
+      dockerfile: e2e-tests.Dockerfile
+    command: [ "--instance=basic" ]
+    environment:
+      PRIVATE_KEY: ${PRIVATE_KEY}
+      GRAPH_NODE_STATUS_ENDPOINT: ${GRAPH_NODE_STATUS_ENDPOINT}
+      REGISTRY_SUBGRAPH: ${REGISTRY_SUBGRAPH}
+      NETWORK_SUBGRAPH: ${NETWORK_SUBGRAPH}
+      GRAPHCAST_NETWORK: ${GRAPHCAST_NETWORK}
+      RUST_LOG: ${RUST_LOG}
+  divergent-instance:
+    build:
+      context: .
+      dockerfile: e2e-tests.Dockerfile
+    command: [ "--instance=divergent" ]
+    environment:
+      PRIVATE_KEY: ${PRIVATE_KEY}
+      GRAPH_NODE_STATUS_ENDPOINT: ${GRAPH_NODE_STATUS_ENDPOINT}
+      REGISTRY_SUBGRAPH: ${REGISTRY_SUBGRAPH}
+      NETWORK_SUBGRAPH: ${NETWORK_SUBGRAPH}
+      GRAPHCAST_NETWORK: ${GRAPHCAST_NETWORK}
+      RUST_LOG: ${RUST_LOG}
+  invalid-payload-instance:
+    build:
+      context: .
+      dockerfile: e2e-tests.Dockerfile
+    command: [ "--instance=invalid_payload" ]
+    environment:
+      PRIVATE_KEY: ${PRIVATE_KEY}
+      GRAPH_NODE_STATUS_ENDPOINT: ${GRAPH_NODE_STATUS_ENDPOINT}
+      REGISTRY_SUBGRAPH: ${REGISTRY_SUBGRAPH}
+      NETWORK_SUBGRAPH: ${NETWORK_SUBGRAPH}
+      GRAPHCAST_NETWORK: ${GRAPHCAST_NETWORK}
+      RUST_LOG: ${RUST_LOG}
+  invalid-nonce-instance:
+    build:
+      context: .
+      dockerfile: e2e-tests.Dockerfile
+    command: [ "--instance=invalid_nonce" ]
+    environment:
+      PRIVATE_KEY: ${PRIVATE_KEY}
+      GRAPH_NODE_STATUS_ENDPOINT: ${GRAPH_NODE_STATUS_ENDPOINT}
+      REGISTRY_SUBGRAPH: ${REGISTRY_SUBGRAPH}
+      NETWORK_SUBGRAPH: ${NETWORK_SUBGRAPH}
+      GRAPHCAST_NETWORK: ${GRAPHCAST_NETWORK}
+      RUST_LOG: ${RUST_LOG}
+  invalid-block-hash-instance:
+    build:
+      context: .
+      dockerfile: e2e-tests.Dockerfile
+    command: [ "--instance=invalid_hash" ]
+    environment:
+      PRIVATE_KEY: ${PRIVATE_KEY}
+      GRAPH_NODE_STATUS_ENDPOINT: ${GRAPH_NODE_STATUS_ENDPOINT}
+      REGISTRY_SUBGRAPH: ${REGISTRY_SUBGRAPH}
+      NETWORK_SUBGRAPH: ${NETWORK_SUBGRAPH}
+      GRAPHCAST_NETWORK: ${GRAPHCAST_NETWORK}
+      RUST_LOG: ${RUST_LOG}
