@@ -1,8 +1,10 @@
 .envrc
 .env
 /target
-/Cargo.lock
 /.idea
 /.fleet
-/examples/target
+/integration-tests/target
+logs
 boot_node_addr.conf
+data
+*.swp

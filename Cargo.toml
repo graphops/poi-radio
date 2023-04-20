@@ -3,14 +3,15 @@ name = "poi-radio"
 version = "0.0.13"
 edition = "2021"
 authors = ["GraphOps (axiomatic-aardvark, hopeyen)"]
-description="POI Radio monitors subgraph data integrity in real time using Graphcast SDK"
-license="Apache-2.0"
-repository="https://github.com/graphops/poi-radio"
-keywords=["graphprotocol", "data-integrity", "Indexer", "waku", "p2p"]
-categories=["network-programming", "web-programming::http-client"]
+description = "POI Radio monitors subgraph data integrity in real time using Graphcast SDK"
+license = "Apache-2.0"
+repository = "https://github.com/graphops/poi-radio"
+keywords = ["graphprotocol", "data-integrity", "Indexer", "waku", "p2p"]
+categories = ["network-programming", "web-programming::http-client"]
+default-run = "poi-radio"
 
 [dependencies]
-graphcast-sdk = { git = "http://github.com/graphops/graphcast-sdk" }
+graphcast-sdk = { package = "graphcast-sdk", git = "https://github.com/graphops/graphcast-sdk" }
 prost = "0.11"
 once_cell = "1.15"
 chrono = "0.4"
@@ -24,9 +25,9 @@ serde_derive = "1.0.114"
 reqwest = { version = "0.11.0", features = ["json"] }
 thiserror = "1.0.40"
 regex = "1.7.1"
-ethers = "2.0.3"
-ethers-contract = "2.0.3"
-ethers-core = "2.0.3"
+ethers = "2.0.0"
+ethers-contract = "2.0.0"
+ethers-core = "2.0.0"
 ethers-derive-eip712 = "1.0.2"
 partial_application = "0.2.1"
 num-bigint = "0.4.3"
@@ -52,8 +53,14 @@ metrics-exporter-prometheus = "0.11.0"
 opentelemetry = {version = "0.18.0", features = ["rt-tokio"]}
 opentelemetry-jaeger = {version = "0.17.0", features = ["rt-tokio"]}
 tracing-opentelemetry = "0.18.0"
+clap = { version = "4.1.6", features = ["derive"] }
+
+[[bin]]
+name = "integration-tests"
+path = "integration-tests/src/main.rs"
 
 [dev-dependencies.cargo-husky]
 version = "1"
-default-features = false # Disable features which are enabled by default
+default-features = false
+# Disable features which are enabled by default
 features = ["precommit-hook", "run-cargo-fmt", "run-cargo-clippy"]
