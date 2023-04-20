@@ -1,14 +1,14 @@
 #![allow(clippy::await_holding_lock)]
 use crate::utils::{
-    generate_deterministic_address, generate_random_address, get_random_port, round_to_nearest,
-    setup_mock_env_vars, setup_mock_server, test_process_messages, DummyMsg, RadioTestConfig,
+    generate_deterministic_address, generate_random_private_key, get_random_port,
+    private_key_to_address, round_to_nearest, setup_mock_env_vars, setup_mock_server,
+    test_process_messages, DummyMsg, RadioTestConfig,
 };
-use crate::CONFIG;
 use chrono::Utc;
 
 use ethers::signers::{LocalWallet, Signer};
 use graphcast_sdk::graphcast_agent::message_typing::{BuildMessageError, GraphcastMessage};
-use graphcast_sdk::graphcast_agent::{GraphcastAgent, GraphcastAgentError};
+use graphcast_sdk::graphcast_agent::{GraphcastAgent, GraphcastAgentConfig, GraphcastAgentError};
 use graphcast_sdk::graphql::client_graph_node::update_chainhead_blocks;
 use graphcast_sdk::graphql::client_network::query_network_subgraph;
 use graphcast_sdk::graphql::client_registry::query_registry_indexer;
@@ -26,7 +26,7 @@ use poi_radio::graphql::query_graph_node_poi;
 use poi_radio::metrics::{handle_serve_metrics, CACHED_MESSAGES};
 use poi_radio::{
     attestation::Attestation, chainhead_block_str, radio_msg_handler, MessagesVec, OperationError,
-    RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES,
+    RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES, RADIO_NAME,
 };
 use rand::{thread_rng, Rng};
 use secp256k1::SecretKey;
@@ -63,7 +63,9 @@ pub async fn run_test_radio<S, A, P>(
         .parse::<i64>()
         .unwrap_or(60);
 
-    let graphcast_id = generate_random_address();
+    let private_key = generate_random_private_key();
+    env::set_var("PRIVATE_KEY", private_key.display_secret().to_string());
+    let graphcast_id = private_key_to_address(private_key);
     env::set_var("MOCK_SENDER", graphcast_id.clone());
     let indexer_address = generate_deterministic_address(&graphcast_id);
 
@@ -115,7 +117,7 @@ pub async fn run_test_radio<S, A, P>(
     let private_key = env::var("PRIVATE_KEY").unwrap();
 
     // TODO: Add something random and unique here to avoid noise form other operators
-    let radio_name: &str = "test-poi-radio";
+    _ = RADIO_NAME.set("test-poi-radio");
 
     let my_address =
         query_registry_indexer(registry_subgraph.clone(), graphcast_id_address(&wallet))
@@ -131,25 +133,24 @@ pub async fn run_test_radio<S, A, P>(
         my_stake
     );
 
-    let graphcast_agent = GraphcastAgent::new(
+    let graphcast_agent_config = GraphcastAgentConfig::new(
         private_key,
-        radio_name,
-        &registry_subgraph,
-        &network_subgraph,
-        &graph_node_endpoint,
-        vec![],
-        Some("testnet"),
-        runtime_config.subgraphs.clone().unwrap_or(vec![
-            MOCK_SUBGRAPH_MAINNET.to_string(),
-            MOCK_SUBGRAPH_GOERLI.to_string(),
-        ]),
+        RADIO_NAME.get().expect("RADIO_NAME required"),
+        registry_subgraph.clone(),
+        network_subgraph.clone(),
+        graph_node_endpoint.clone(),
+        None,
+        Some("testnet".to_owned()),
+        runtime_config.subgraphs.clone(),
         None,
         None,
         Some(get_random_port()),
         None,
     )
     .await
-    .unwrap();
+    .expect("Failed to create GraphcastAgentConfig");
+
+    let graphcast_agent = GraphcastAgent::new(graphcast_agent_config).await.unwrap();
 
     _ = GRAPHCAST_AGENT.set(graphcast_agent);
     _ = MESSAGES.set(Arc::new(SyncMutex::new(vec![])));
@@ -162,6 +163,7 @@ pub async fn run_test_radio<S, A, P>(
 
     let local_attestations: Arc<AsyncMutex<LocalAttestationsMap>> =
         Arc::new(AsyncMutex::new(HashMap::new()));
+
     // Main loop for sending messages, can factor out
     // and take radio specific query and parsing for radioPayload
     loop {
@@ -268,7 +270,6 @@ pub async fn run_test_radio<S, A, P>(
                     compare_block,
                     registry_subgraph.clone(),
                     network_subgraph.clone(),
-                    network_name,
                     filtered_msg,
                     local,
                     success_handler,
@@ -301,37 +302,41 @@ pub async fn run_test_radio<S, A, P>(
                         // Only clear the ones matching identifier and block number equal or less
                         // Retain the msgs with a different identifier, or if their block number is greater
                         let local = Arc::clone(&local_attestations);
-                        clear_local_attestation(local, r.deployment(), r.block()).await;
-                        CACHED_MESSAGES.with_label_values(&[&r.deployment()]).set(
-                            MESSAGES
-                                .get()
-                                .unwrap()
-                                .lock()
-                                .unwrap()
-                                .len()
-                                .try_into()
-                                .unwrap(),
-                        );
+                        clear_local_attestation(local, r.deployment_hash(), r.block()).await;
+                        CACHED_MESSAGES
+                            .with_label_values(&[&r.deployment_hash()])
+                            .set(
+                                MESSAGES
+                                    .get()
+                                    .unwrap()
+                                    .lock()
+                                    .unwrap()
+                                    .len()
+                                    .try_into()
+                                    .unwrap(),
+                            );
                         MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
-                            msg.block_number >= r.block() || msg.identifier != r.deployment()
+                            msg.block_number >= r.block() || msg.identifier != r.deployment_hash()
                         });
 
                         post_comparison_handler(
                             OnceCell::with_value(MESSAGES.get().unwrap().clone()),
                             r.block(),
-                            &r.deployment(),
+                            &r.deployment_hash(),
                         );
 
-                        CACHED_MESSAGES.with_label_values(&[&r.deployment()]).set(
-                            MESSAGES
-                                .get()
-                                .unwrap()
-                                .lock()
-                                .unwrap()
-                                .len()
-                                .try_into()
-                                .unwrap(),
-                        );
+                        CACHED_MESSAGES
+                            .with_label_values(&[&r.deployment_hash()])
+                            .set(
+                                MESSAGES
+                                    .get()
+                                    .unwrap()
+                                    .lock()
+                                    .unwrap()
+                                    .len()
+                                    .try_into()
+                                    .unwrap(),
+                            );
                     }
                     Err(e) => {
                         warn!("Compare handles: {}", e.to_string());
@@ -341,14 +346,12 @@ pub async fn run_test_radio<S, A, P>(
             }
         }
 
-        let config = CONFIG.get().unwrap();
         log_summary(
             blocks_str,
             num_topics,
             send_ops,
             compare_ops,
-            radio_name,
-            config,
+            RADIO_NAME.get().unwrap(),
         )
         .await;
 
@@ -634,7 +637,6 @@ pub async fn message_comparison<S, A>(
     compare_block: Option<u64>,
     registry_subgraph: String,
     network_subgraph: String,
-    network_name: NetworkName,
     messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
     local_attestations: Arc<AsyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
     success_handler: S,
@@ -654,23 +656,6 @@ where
         .filter(|&m| Some(m.block_number) == compare_block && Some(m.nonce) <= collect_window_end)
         .cloned()
         .collect();
-
-    if filter_msg.is_empty() {
-        let err_msg = format!(
-            "Deployment {} comparison not triggered: No valid remote messages cached for the block: {}",
-            id.clone(),
-            match compare_block {
-                None => String::from("None"),
-                Some(x) => x.to_string(),
-            }
-        );
-        debug!("{}", err_msg);
-        return Ok(ComparisonResult::NotFound(
-            id.clone(),
-            compare_block.unwrap_or_default(),
-            err_msg,
-        ));
-    }
 
     let (compare_block, _collect_window_end) = match (compare_block, collect_window_end) {
         (Some(block), Some(window)) if time >= window && latest_block > block => (block, window),
@@ -729,7 +714,6 @@ where
         }
     };
     let comparison_result = compare_attestations(
-        network_name,
         compare_block,
         remote_attestations,
         Arc::clone(&local_attestations),

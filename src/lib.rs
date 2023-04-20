@@ -1,6 +1,6 @@
-use async_graphql::SimpleObject;
-use attestation::AttestationError;
+use async_graphql::{Error, ErrorExtensions, SimpleObject};
 use autometrics::autometrics;
+use config::{Config, CoverageLevel};
 use ethers_contract::EthAbiType;
 use ethers_core::types::transaction::eip712::Eip712;
 use ethers_derive_eip712::*;
@@ -18,8 +18,7 @@ use tokio::signal;
 use tracing::{error, trace};
 
 use graphcast_sdk::{
-    config::CoverageLevel, graphcast_agent::GraphcastAgentError,
-    graphql::client_graph_node::get_indexing_statuses,
+    graphcast_agent::GraphcastAgentError, graphql::client_graph_node::get_indexing_statuses,
 };
 use graphcast_sdk::{
     graphcast_agent::{
@@ -30,11 +29,14 @@ use graphcast_sdk::{
     BlockPointer,
 };
 
+use crate::attestation::AttestationError;
 use crate::metrics::{CACHED_MESSAGES, VALIDATED_MESSAGES};
 
 pub mod attestation;
+pub mod config;
 pub mod graphql;
 pub mod metrics;
+pub mod operation;
 pub mod server;
 
 pub type MessagesVec = OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>>;
@@ -49,6 +51,11 @@ pub static GRAPHCAST_AGENT: OnceCell<GraphcastAgent> = OnceCell::new();
 /// it is not allowed in the handler itself.
 pub static MESSAGES: OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>> =
     OnceCell::new();
+
+/// Radio's global config
+pub static CONFIG: OnceCell<Arc<SyncMutex<Config>>> = OnceCell::new();
+
+pub static RADIO_NAME: OnceCell<&str> = OnceCell::new();
 
 #[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize, PartialEq, SimpleObject)]
 #[eip712(
@@ -113,12 +120,11 @@ pub async fn active_allocation_hashes(
 ) -> Vec<String> {
     query_network_subgraph(network_subgraph.to_string(), indexer_address)
         .await
-        .map_err(|e| -> Vec<String> {
+        .map(|result| result.indexer_allocations())
+        .unwrap_or_else(|e| {
             error!("Topic generation error: {}", e);
-            [].to_vec()
+            vec![]
         })
-        .unwrap()
-        .indexer_allocations()
 }
 
 /// Generate content topics for all deployments that are syncing on Graph node
@@ -254,6 +260,12 @@ impl OperationError {
             }
             e => OperationError::Others(e.to_string()),
         }
+    }
+}
+
+impl ErrorExtensions for OperationError {
+    fn extend(&self) -> Error {
+        Error::new(format!("{}", self))
     }
 }
 

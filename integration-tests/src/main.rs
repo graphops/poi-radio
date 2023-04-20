@@ -4,10 +4,11 @@ pub mod utils;
 
 use checks::simple_tests::run_simple_tests;
 use dotenv::dotenv;
-use graphcast_sdk::config::Config;
-use once_cell::sync::OnceCell;
+use poi_radio::config::Config;
+use poi_radio::{CONFIG, RADIO_NAME};
 use setup::basic::run_basic_instance;
-use std::str::FromStr;
+use std::sync::{Arc, Mutex as SyncMutex};
+use std::{env, str::FromStr};
 use tracing::{error, info};
 
 use crate::{
@@ -70,15 +71,18 @@ impl FromStr for Check {
     }
 }
 
-pub static CONFIG: OnceCell<Config> = OnceCell::new();
-
 #[tokio::main]
 pub async fn main() {
     dotenv().ok();
     let args = Config::args();
-    _ = CONFIG.set(args.clone());
 
-    if let Some(instance) = &args.instance {
+    _ = CONFIG.set(Arc::new(SyncMutex::new(args)));
+    _ = RADIO_NAME.set("test-radio");
+
+    let test_instance = env::var("INSTANCE").ok();
+    let test_check = env::var("CHECK").ok();
+
+    if let Some(instance) = &test_instance {
         match Instance::from_str(instance) {
             Ok(Instance::Basic) => {
                 info!("Starting basic instance");
@@ -124,7 +128,7 @@ pub async fn main() {
         }
     }
 
-    if let Some(check) = &args.check {
+    if let Some(check) = &test_check {
         match Check::from_str(check) {
             Ok(Check::SimpleTests) => std::thread::spawn(|| {
                 info!("Starting simple tests");
