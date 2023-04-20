@@ -8,8 +8,7 @@ use crate::{RadioPayloadMessage, MESSAGES};
 
 pub(crate) type POIRadioSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
 
-// Unified query object
-// Later add attestations and Graphcast Agent (or topics)
+// Unified query object for resolvers
 #[derive(Default)]
 pub struct QueryRoot;
 
