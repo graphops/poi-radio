@@ -1,0 +1,132 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'poi-radio'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=poi-radio"
+                ],
+                "filter": {
+                    "name": "poi-radio",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "env": {
+                "GRAPH_NODE": "http://localhost:8030/graphql",
+                "PRIVATE_KEY": "806ccd0301ec455bfc94c71c9d199de4ce8838717a15da0a57a5d2cdc717bb5c",
+                "TOPICS": "Qmb5Ysp5oCUXhLA8NmxmYKDAX2nCMnh7Vvb5uffb9n5vss",
+                "RUST_LOG": "info,hyper=off,graphcast_sdk=info,waku_bindings=off,gowaku.node2=off,gowaku=off,poi_radio=info",
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'integration-tests'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=integration-tests",
+                    "--package=poi-radio"
+                ],
+                "filter": {
+                    "name": "integration-tests",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "env": {
+                "GRAPH_NODE": "http://localhost:8030/graphql",
+                "PRIVATE_KEY": "806ccd0301ec455bfc94c71c9d199de4ce8838717a15da0a57a5d2cdc717bb5c",
+                "TOPICS": "Qmb5Ysp5oCUXhLA8NmxmYKDAX2nCMnh7Vvb5uffb9n5vss",
+                "RUST_LOG": "info,hyper=off,graphcast_sdk=info,waku_bindings=off,gowaku.node2=off,gowaku=off,poi_radio=info",
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'integration-tests'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=integration-tests",
+                    "--package=poi-radio"
+                ],
+                "filter": {
+                    "name": "integration-tests",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "env": {
+                "GRAPH_NODE": "http://localhost:8030/graphql",
+                "PRIVATE_KEY": "806ccd0301ec455bfc94c71c9d199de4ce8838717a15da0a57a5d2cdc717bb5c",
+                "TOPICS": "Qmb5Ysp5oCUXhLA8NmxmYKDAX2nCMnh7Vvb5uffb9n5vss",
+                "RUST_LOG": "info,hyper=off,graphcast_sdk=info,waku_bindings=off,gowaku.node2=off,gowaku=off,poi_radio=info",
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'poi-radio'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=poi-radio",
+                    "--package=poi-radio"
+                ],
+                "filter": {
+                    "name": "poi-radio",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "env": {
+                "GRAPH_NODE": "http://localhost:8030/graphql",
+                "PRIVATE_KEY": "806ccd0301ec455bfc94c71c9d199de4ce8838717a15da0a57a5d2cdc717bb5c",
+                "TOPICS": "Qmb5Ysp5oCUXhLA8NmxmYKDAX2nCMnh7Vvb5uffb9n5vss",
+                "RUST_LOG": "info,hyper=off,graphcast_sdk=info,waku_bindings=off,gowaku.node2=off,gowaku=off,poi_radio=info",
+                "RUST_LOG": "info,hyper=off,graphcast_sdk=info,waku_bindings=off,gowaku.node2=off,gowaku=off,poi_radio=info",
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'poi-radio'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=poi-radio",
+                    "--package=poi-radio"
+                ],
+                "filter": {
+                    "name": "poi-radio",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "env": {
+                "GRAPH_NODE": "http://localhost:8030/graphql",
+                "PRIVATE_KEY": "806ccd0301ec455bfc94c71c9d199de4ce8838717a15da0a57a5d2cdc717bb5c",
+                "TOPICS": "Qmb5Ysp5oCUXhLA8NmxmYKDAX2nCMnh7Vvb5uffb9n5vss",
+                "RUST_LOG": "info,hyper=off,graphcast_sdk=info,waku_bindings=off,gowaku.node2=off,gowaku=off,poi_radio=info",
+            },
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

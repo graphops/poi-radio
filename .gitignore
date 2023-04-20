@@ -8,3 +8,4 @@ logs
 boot_node_addr.conf
 data
 *.swp
+.vscode

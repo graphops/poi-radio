@@ -63,13 +63,15 @@ pub fn round_to_nearest(number: i64) -> i64 {
     (number / 10) * 10 + if number % 10 > 4 { 10 } else { 0 }
 }
 
-pub fn generate_random_address() -> String {
+pub fn generate_random_private_key() -> SecretKey {
     let mut rng = thread_rng();
     let mut private_key = [0u8; 32];
     rng.fill(&mut private_key[..]);
 
-    let private_key = SecretKey::from_slice(&private_key).expect("Error parsing secret key");
+    SecretKey::from_slice(&private_key).expect("Error parsing secret key")
+}
 
+pub fn private_key_to_address(private_key: SecretKey) -> String {
     let public_key =
         secp256k1::PublicKey::from_secret_key(&secp256k1::Secp256k1::new(), &private_key)
             .serialize_uncompressed();

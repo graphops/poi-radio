@@ -22,9 +22,10 @@ ENV PATH=$PATH:/usr/local/go/bin
 
 RUN cargo build --release
 
-FROM alpine:3.17.3 as upx
-RUN apk update \
-    && apk add upx
+FROM alpine:3.17.3 as alpine
+RUN set -x \
+    && apk update \
+    && apk add --no-cache upx dumb-init
 COPY --from=build-image /poi-radio/target/release/poi-radio /poi-radio/target/release/poi-radio
 RUN upx --overlay=strip --best /poi-radio/target/release/poi-radio
 
@@ -33,5 +34,6 @@ COPY --from=build-image /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=build-image /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build-image /etc/passwd /etc/passwd
 COPY --from=build-image /etc/group /etc/group
-COPY --from=upx "/poi-radio/target/release/poi-radio" "/usr/local/bin/poi-radio"
-ENTRYPOINT [ "/usr/local/bin/poi-radio" ]
+COPY --from=alpine /usr/bin/dumb-init /usr/bin/dumb-init
+COPY --from=alpine "/poi-radio/target/release/poi-radio" "/usr/local/bin/poi-radio"
+ENTRYPOINT [ "/usr/bin/dumb-init", "--", "/usr/local/bin/poi-radio" ]

@@ -47,8 +47,8 @@ Test Suite Duration: ${duration_minutes}m ${duration_seconds}s
 -------------------------------------
 "
 
-    if [ "$num_fail_tests" -gt 0 ]; then
-        echo "The following tests failed:"
+    if [ "$num_fail_tests" -gt 0 ] || [ "$num_timeout_tests" -gt 0 ]; then
+        echo "The following tests failed or timed out:"
         printf '%s\n' "${names_of_failed_tests[@]}"
         dump_failed_tests_logs
         exit 1
@@ -63,9 +63,11 @@ run_test_with_timeout() {
     local timeout_value=$2
     echo "Running test: $test_name"
     num_total_tests=$((num_total_tests + 1))
-    timeout $timeout_value cargo run --bin integration-tests -- --check=$test_name 2>&1 | tee "logs/${test_name}_logs.log"
-    timeout_exit_code=${PIPESTATUS[0]}
-    cargo_exit_code=${PIPESTATUS[1]}
+    export CHECK=$test_name
+    timeout_output=$(timeout $timeout_value sh -c 'cargo run --bin integration-tests --' 2>&1)
+    timeout_exit_code=$?
+    cargo_exit_code=$?
+    echo "$timeout_output" | tee "logs/${test_name}_logs.log"
     if [ $cargo_exit_code -eq 0 ]; then
         echo "$test_name - ✓"
         num_success_tests=$((num_success_tests + 1))
@@ -112,88 +114,25 @@ done
 echo "Waiting for containers to settle..."
 sleep 15
 
-echo "Running all simple tests"
-timeout 15m cargo run --bin integration-tests -- --check=simple_tests 2>&1 | tee logs/simple_tests_logs.log
-timeout_exit_code=${PIPESTATUS[0]}
-num_total_tests=$((num_total_tests + 1))
-if [ $timeout_exit_code -eq 0 ]; then
-    echo "simple_tests - ✓"
-    num_success_tests=$((num_success_tests + 1))
-    rm logs/simple_tests_logs.log
-elif [ $timeout_exit_code -eq 124 ]; then
-    echo "simple_tests - timeout"
-    num_timeout_tests=$((num_timeout_tests + 1))
-    names_of_failed_tests+=("simple_tests")
-else
-    echo "simple_tests - ✗"
-    num_fail_tests=$((num_fail_tests + 1))
-    names_of_failed_tests+=("simple_tests")
-fi
+# Run simple_tests
+run_test_with_timeout "simple_tests" "15m"
 
-# Run one-off test
-echo "Running test: invalid_sender"
-num_total_tests=$((num_total_tests + 1))
-timeout 5m cargo run --bin integration-tests -- --check=invalid_sender 2>&1 | tee logs/invalid_sender_logs.log
-timeout_exit_code=${PIPESTATUS[0]}
-if [ $timeout_exit_code -eq 0 ]; then
-    echo "invalid_sender - ✓"
-    num_success_tests=$((num_success_tests + 1))
-    rm logs/invalid_sender_logs.log
-elif [ $timeout_exit_code -eq 124 ]; then
-    echo "invalid_sender - timeout"
-    num_timeout_tests=$((num_timeout_tests + 1))
-    names_of_failed_tests+=("invalid_sender")
-else
-    echo "invalid_sender - ✗"
-    num_fail_tests=$((num_fail_tests + 1))
-    names_of_failed_tests+=("invalid_sender")
-fi
+# Run invalid_sender test
+run_test_with_timeout "invalid_sender" "5m"
 
-# Run one-off test
-echo "Running test: invalid_messages"
-num_total_tests=$((num_total_tests + 1))
-timeout 5m cargo run --bin integration-tests -- --check=invalid_messages 2>&1 | tee logs/invalid_messages_logs.log
-timeout_exit_code=${PIPESTATUS[0]}
-if [ $timeout_exit_code -eq 0 ]; then
-    echo "invalid_messages - ✓"
-    num_success_tests=$((num_success_tests + 1))
-    rm logs/invalid_messages_logs.log
-elif [ $timeout_exit_code -eq 124 ]; then
-    echo "invalid_messages - timeout"
-    num_timeout_tests=$((num_timeout_tests + 1))
-    names_of_failed_tests+=("invalid_messages")
-else
-    echo "invalid_messages - ✗"
-    num_fail_tests=$((num_fail_tests + 1))
-    names_of_failed_tests+=("invalid_messages")
-fi
+# Run invalid_messages test
+run_test_with_timeout "invalid_messages" "5m"
 
 # Scale up divergent instances
 echo "Scaling containers..."
-docker-compose -f $compose_file up -d --scale divergent-instance=1 basic-instance=8
+docker-compose -f $compose_file up -d --scale divergent-instance=1 --scale basic-instance=8
 
 # Wait 1 minute for containers to settle
 echo "Waiting for containers to settle..."
 sleep 60
 
-# Run one-off test
-echo "Running test: poi_divergence_remote"
-num_total_tests=$((num_total_tests + 1))
-timeout 5m cargo run --bin integration-tests -- --check=poi_divergence_remote 2>&1 | tee logs/poi_divergence_remote_logs.log
-timeout_exit_code=${PIPESTATUS[0]}
-if [ $timeout_exit_code -eq 0 ]; then
-    echo "poi_divergence_remote - ✓"
-    num_success_tests=$((num_success_tests + 1))
-    rm logs/poi_divergence_remote_logs.log
-elif [ $timeout_exit_code -eq 124 ]; then
-    echo "poi_divergence_remote - timeout"
-    num_timeout_tests=$((num_timeout_tests + 1))
-    names_of_failed_tests+=("poi_divergence_remote")
-else
-    echo "poi_divergence_remote - ✗"
-    num_fail_tests=$((num_fail_tests + 1))
-    names_of_failed_tests+=("poi_divergence_remote")
-fi
+# Run poi_divergence_remote test
+run_test_with_timeout "poi_divergence_remote" "5m"
 
 # Scale down basic instances to 1 and scale up divergent instances to 5
 echo "Scaling containers..."
@@ -203,24 +142,8 @@ docker-compose -f $compose_file up -d --scale basic-instance=1 --scale divergent
 echo "Waiting for containers to settle..."
 sleep 10
 
-# Run one-off test
-echo "Running test: poi_divergence_local"
-num_total_tests=$((num_total_tests + 1))
-timeout 5m cargo run --bin integration-tests -- --check=poi_divergence_local 2>&1 | tee logs/poi_divergence_local_logs.log
-timeout_exit_code=${PIPESTATUS[0]}
-if [ $timeout_exit_code -eq 0 ]; then
-    echo "poi_divergence_local - ✓"
-    num_success_tests=$((num_success_tests + 1))
-    rm logs/poi_divergence_local_logs.log
-elif [ $timeout_exit_code -eq 124 ]; then
-    echo "poi_divergence_local - timeout"
-    num_timeout_tests=$((num_timeout_tests + 1))
-    names_of_failed_tests+=("poi_divergence_local")
-else
-    echo "poi_divergence_local - ✗"
-    num_fail_tests=$((num_fail_tests + 1))
-    names_of_failed_tests+=("poi_divergence_local")
-fi
+# Run poi_divergence_local test
+run_test_with_timeout "poi_divergence_local" "5m"
 
 # Stop containers and print summary report
 stop_containers
