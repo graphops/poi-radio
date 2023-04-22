@@ -12,9 +12,10 @@ fi
 
 auto-changelog --latest-version VERSION --release-summary
 
+
 (
-  git add CHANGELOG.md Cargo.toml Cargo.lock \
-    && git commit -m "chore: Bump version"
+  git add CHANGELOG.md \
+    && git commit -m "chore: Update changelogs ahead of release"
 ) || true
 
 # Publish to crates.io
