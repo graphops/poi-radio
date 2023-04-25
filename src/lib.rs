@@ -113,12 +113,11 @@ pub async fn active_allocation_hashes(
 ) -> Vec<String> {
     query_network_subgraph(network_subgraph.to_string(), indexer_address)
         .await
-        .map_err(|e| -> Vec<String> {
+        .map(|result| result.indexer_allocations())
+        .unwrap_or_else(|e| {
             error!("Topic generation error: {}", e);
-            [].to_vec()
+            vec![]
         })
-        .unwrap()
-        .indexer_allocations()
 }
 
 /// Generate content topics for all deployments that are syncing on Graph node
