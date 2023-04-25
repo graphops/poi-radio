@@ -8,6 +8,7 @@ use graphcast_sdk::config::Config;
 use once_cell::sync::OnceCell;
 use setup::basic::run_basic_instance;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex as SyncMutex};
 use tracing::{error, info};
 
 use crate::{
@@ -70,13 +71,13 @@ impl FromStr for Check {
     }
 }
 
-pub static CONFIG: OnceCell<Config> = OnceCell::new();
+pub static CONFIG: OnceCell<Arc<SyncMutex<Config>>> = OnceCell::new();
 
 #[tokio::main]
 pub async fn main() {
     dotenv().ok();
     let args = Config::args();
-    _ = CONFIG.set(args.clone());
+    _ = CONFIG.set(Arc::new(SyncMutex::new(args.clone())));
 
     if let Some(instance) = &args.instance {
         match Instance::from_str(instance) {

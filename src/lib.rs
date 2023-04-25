@@ -1,5 +1,4 @@
-use async_graphql::SimpleObject;
-use attestation::AttestationError;
+use async_graphql::{Error, ErrorExtensions, SimpleObject};
 use autometrics::autometrics;
 use ethers_contract::EthAbiType;
 use ethers_core::types::transaction::eip712::Eip712;
@@ -18,7 +17,8 @@ use tokio::signal;
 use tracing::{error, trace};
 
 use graphcast_sdk::{
-    config::CoverageLevel, graphcast_agent::GraphcastAgentError,
+    config::{Config, CoverageLevel},
+    graphcast_agent::GraphcastAgentError,
     graphql::client_graph_node::get_indexing_statuses,
 };
 use graphcast_sdk::{
@@ -30,6 +30,7 @@ use graphcast_sdk::{
     BlockPointer,
 };
 
+use crate::attestation::AttestationError;
 use crate::metrics::{CACHED_MESSAGES, VALIDATED_MESSAGES};
 
 pub mod attestation;
@@ -49,6 +50,9 @@ pub static GRAPHCAST_AGENT: OnceCell<GraphcastAgent> = OnceCell::new();
 /// it is not allowed in the handler itself.
 pub static MESSAGES: OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>> =
     OnceCell::new();
+
+/// Radio's global config
+pub static CONFIG: OnceCell<Arc<SyncMutex<Config>>> = OnceCell::new();
 
 #[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize, PartialEq, SimpleObject)]
 #[eip712(
@@ -254,6 +258,12 @@ impl OperationError {
             }
             e => OperationError::Others(e.to_string()),
         }
+    }
+}
+
+impl ErrorExtensions for OperationError {
+    fn extend(&self) -> Error {
+        Error::new(format!("{}", self))
     }
 }
 

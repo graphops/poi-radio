@@ -3,7 +3,6 @@ use crate::utils::{
     generate_deterministic_address, generate_random_address, get_random_port, round_to_nearest,
     setup_mock_env_vars, setup_mock_server, test_process_messages, DummyMsg, RadioTestConfig,
 };
-use crate::CONFIG;
 use chrono::Utc;
 
 use ethers::signers::{LocalWallet, Signer};
@@ -268,7 +267,6 @@ pub async fn run_test_radio<S, A, P>(
                     compare_block,
                     registry_subgraph.clone(),
                     network_subgraph.clone(),
-                    network_name,
                     filtered_msg,
                     local,
                     success_handler,
@@ -301,37 +299,41 @@ pub async fn run_test_radio<S, A, P>(
                         // Only clear the ones matching identifier and block number equal or less
                         // Retain the msgs with a different identifier, or if their block number is greater
                         let local = Arc::clone(&local_attestations);
-                        clear_local_attestation(local, r.deployment(), r.block()).await;
-                        CACHED_MESSAGES.with_label_values(&[&r.deployment()]).set(
-                            MESSAGES
-                                .get()
-                                .unwrap()
-                                .lock()
-                                .unwrap()
-                                .len()
-                                .try_into()
-                                .unwrap(),
-                        );
+                        clear_local_attestation(local, r.deployment_hash(), r.block()).await;
+                        CACHED_MESSAGES
+                            .with_label_values(&[&r.deployment_hash()])
+                            .set(
+                                MESSAGES
+                                    .get()
+                                    .unwrap()
+                                    .lock()
+                                    .unwrap()
+                                    .len()
+                                    .try_into()
+                                    .unwrap(),
+                            );
                         MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
-                            msg.block_number >= r.block() || msg.identifier != r.deployment()
+                            msg.block_number >= r.block() || msg.identifier != r.deployment_hash()
                         });
 
                         post_comparison_handler(
                             OnceCell::with_value(MESSAGES.get().unwrap().clone()),
                             r.block(),
-                            &r.deployment(),
+                            &r.deployment_hash(),
                         );
 
-                        CACHED_MESSAGES.with_label_values(&[&r.deployment()]).set(
-                            MESSAGES
-                                .get()
-                                .unwrap()
-                                .lock()
-                                .unwrap()
-                                .len()
-                                .try_into()
-                                .unwrap(),
-                        );
+                        CACHED_MESSAGES
+                            .with_label_values(&[&r.deployment_hash()])
+                            .set(
+                                MESSAGES
+                                    .get()
+                                    .unwrap()
+                                    .lock()
+                                    .unwrap()
+                                    .len()
+                                    .try_into()
+                                    .unwrap(),
+                            );
                     }
                     Err(e) => {
                         warn!("Compare handles: {}", e.to_string());
@@ -341,16 +343,7 @@ pub async fn run_test_radio<S, A, P>(
             }
         }
 
-        let config = CONFIG.get().unwrap();
-        log_summary(
-            blocks_str,
-            num_topics,
-            send_ops,
-            compare_ops,
-            radio_name,
-            config,
-        )
-        .await;
+        log_summary(blocks_str, num_topics, send_ops, compare_ops, radio_name).await;
 
         setup_mock_server(
             round_to_nearest(Utc::now().timestamp()).try_into().unwrap(),
@@ -634,7 +627,6 @@ pub async fn message_comparison<S, A>(
     compare_block: Option<u64>,
     registry_subgraph: String,
     network_subgraph: String,
-    network_name: NetworkName,
     messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
     local_attestations: Arc<AsyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
     success_handler: S,
@@ -654,23 +646,6 @@ where
         .filter(|&m| Some(m.block_number) == compare_block && Some(m.nonce) <= collect_window_end)
         .cloned()
         .collect();
-
-    if filter_msg.is_empty() {
-        let err_msg = format!(
-            "Deployment {} comparison not triggered: No valid remote messages cached for the block: {}",
-            id.clone(),
-            match compare_block {
-                None => String::from("None"),
-                Some(x) => x.to_string(),
-            }
-        );
-        debug!("{}", err_msg);
-        return Ok(ComparisonResult::NotFound(
-            id.clone(),
-            compare_block.unwrap_or_default(),
-            err_msg,
-        ));
-    }
 
     let (compare_block, _collect_window_end) = match (compare_block, collect_window_end) {
         (Some(block), Some(window)) if time >= window && latest_block > block => (block, window),
@@ -729,7 +704,6 @@ where
         }
     };
     let comparison_result = compare_attestations(
-        network_name,
         compare_block,
         remote_attestations,
         Arc::clone(&local_attestations),
