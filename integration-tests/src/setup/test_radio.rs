@@ -3,6 +3,7 @@ use crate::utils::{
     generate_deterministic_address, generate_random_address, get_random_port, round_to_nearest,
     setup_mock_env_vars, setup_mock_server, test_process_messages, DummyMsg, RadioTestConfig,
 };
+use crate::CONFIG;
 use chrono::Utc;
 
 use ethers::signers::{LocalWallet, Signer};
@@ -343,6 +344,7 @@ pub async fn run_test_radio<S, A, P>(
             }
         }
 
+        let _config = CONFIG.get().unwrap().lock().await;
         log_summary(blocks_str, num_topics, send_ops, compare_ops, radio_name).await;
 
         setup_mock_server(

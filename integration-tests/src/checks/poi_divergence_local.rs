@@ -1,6 +1,6 @@
 use std::{env, sync::Arc};
 
-use crate::utils::RadioTestConfig;
+use crate::{utils::RadioTestConfig, CONFIG};
 
 use poi_radio::{
     attestation::{LocalAttestationsMap, RemoteAttestationsMap},
@@ -87,6 +87,8 @@ fn success_handler(_messages: MessagesVec, _graphcast_id: &str) {}
 
 #[tokio::main]
 pub async fn run_poi_divergence_local() {
+    let _config = CONFIG.get().unwrap().lock().await;
+
     let config = RadioTestConfig::new();
     env::set_var("COLLECT_MESSAGE_DURATION", "90");
 

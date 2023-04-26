@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use crate::utils::RadioTestConfig;
+use crate::{utils::RadioTestConfig, CONFIG};
 
 use poi_radio::{
     attestation::{LocalAttestationsMap, RemoteAttestationsMap},
@@ -25,6 +25,8 @@ fn success_handler(_messages: MessagesVec, _graphcast_id: &str) {}
 
 #[tokio::main]
 pub async fn run_invalid_sender_check() {
+    let _config = CONFIG.get().unwrap().lock().await;
+
     let mut config = RadioTestConfig::new();
     config.indexer_stake = 1.00;
 

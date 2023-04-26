@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use crate::setup::test_radio::run_test_radio;
 use crate::utils::RadioTestConfig;
+use crate::{setup::test_radio::run_test_radio, CONFIG};
 use poi_radio::{
     attestation::{LocalAttestationsMap, RemoteAttestationsMap},
     MessagesVec,
@@ -19,6 +19,8 @@ fn test_attestation_handler(
 
 #[tokio::main]
 pub async fn run_invalid_block_hash_instance() {
+    let _config = CONFIG.get().unwrap().lock().await;
+
     let invalid_block_hash =
         "4rfba1ba9fb18b0034965712598be1368edcf91ae2c551d59462aab578dab9c5".to_string();
 

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::utils::RadioTestConfig;
+use crate::CONFIG;
 use crate::{setup::test_radio::run_test_radio, utils::DummyMsg};
 use poi_radio::{
     attestation::{LocalAttestationsMap, RemoteAttestationsMap},
@@ -19,6 +20,8 @@ fn test_attestation_handler(
 
 #[tokio::main]
 pub async fn run_invalid_payload_instance() {
+    let _config = CONFIG.get().unwrap().lock().await;
+
     let mut config = RadioTestConfig::default_config();
     let dummy_message = DummyMsg::new("hello".to_string(), 42);
     config.invalid_payload = Some(dummy_message);

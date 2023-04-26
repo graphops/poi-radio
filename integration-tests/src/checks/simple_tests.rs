@@ -1,6 +1,7 @@
 use crate::{
     setup::constants::{MOCK_SUBGRAPH_GOERLI, MOCK_SUBGRAPH_GOERLI_2, MOCK_SUBGRAPH_MAINNET},
     utils::{generate_deterministic_address, RadioTestConfig},
+    CONFIG,
 };
 
 use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
@@ -228,6 +229,8 @@ fn success_handler(start_time: Instant, messages: MessagesVec, graphcast_id: &st
 
 #[tokio::main]
 pub async fn run_simple_tests() {
+    let _config = CONFIG.get().unwrap().lock().await;
+
     // Collect duration to 1 minute
     env::set_var("COLLECT_MESSAGE_DURATION", "60");
 
