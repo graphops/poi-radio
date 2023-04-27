@@ -1,4 +1,4 @@
-use async_graphql::SimpleObject;
+use async_graphql::{Enum, Error, ErrorExtensions, SimpleObject};
 use autometrics::autometrics;
 use chrono::Utc;
 
@@ -14,17 +14,15 @@ use tracing::{debug, error, info, trace, warn};
 
 use graphcast_sdk::{
     bots::{DiscordBot, SlackBot},
-    config::Config,
     graphcast_agent::message_typing::{get_indexer_stake, BuildMessageError, GraphcastMessage},
     graphql::client_registry::query_registry_indexer,
-    networks::NetworkName,
 };
 
 use crate::{
     metrics::{
         ACTIVE_INDEXERS, DIVERGING_SUBGRAPHS, INDEXER_COUNT_BY_NPOI, LOCAL_NPOIS_TO_COMPARE,
     },
-    OperationError, RadioPayloadMessage,
+    OperationError, RadioPayloadMessage, CONFIG,
 };
 
 /// A wrapper around an attested NPOI, tracks Indexers that have sent it plus their accumulated stake
@@ -314,38 +312,48 @@ pub async fn clear_local_attestation(
 }
 
 /// Tracks results indexed by deployment hash and block number
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub enum ComparisonResult {
-    NotFound(String, u64, String),
-    Divergent(String, u64, String),
-    Match(String, u64, String),
-    BuildFailed(String, u64, String),
+#[derive(Enum, Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum ComparisonResultType {
+    NotFound,
+    Divergent,
+    Match,
+    BuildFailed,
+}
+
+/// Keep track of the attestation result for a deployment and block
+/// Can add block_hash and network fields for tracking if needed
+#[derive(Debug, PartialEq, Eq, Hash, SimpleObject)]
+pub struct ComparisonResult {
+    pub deployment: String,
+    pub block_number: u64,
+    pub result_type: ComparisonResultType,
+    pub local_attestation: Option<Attestation>,
+    pub attestations: Vec<Attestation>,
 }
 
 impl ComparisonResult {
-    pub fn deployment(&self) -> String {
-        match self {
-            ComparisonResult::NotFound(d, _, _) => d.clone(),
-            ComparisonResult::Divergent(d, _, _) => d.clone(),
-            ComparisonResult::Match(d, _, _) => d.clone(),
-            ComparisonResult::BuildFailed(d, _, _) => d.clone(),
-        }
+    pub fn deployment_hash(&self) -> String {
+        self.deployment.clone()
     }
 
     pub fn block(&self) -> u64 {
-        match self {
-            ComparisonResult::NotFound(_, b, _) => *b,
-            ComparisonResult::Divergent(_, b, _) => *b,
-            ComparisonResult::Match(_, b, _) => *b,
-            ComparisonResult::BuildFailed(_, b, _) => *b,
-        }
+        self.block_number
     }
-    pub fn help_string(&self) -> String {
+}
+
+impl Display for ComparisonResultType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ComparisonResult::NotFound(_, _, h) => h.clone(),
-            ComparisonResult::Divergent(_, _, h) => h.clone(),
-            ComparisonResult::Match(_, _, h) => h.clone(),
-            ComparisonResult::BuildFailed(_, _, h) => h.clone(),
+            ComparisonResultType::NotFound => {
+                write!(f, "NotFound")
+            }
+            ComparisonResultType::Divergent => {
+                write!(f, "Divergent")
+            }
+            ComparisonResultType::Match => {
+                write!(f, "Matched")
+            }
+            ComparisonResultType::BuildFailed => write!(f, "Failed to build message"),
         }
     }
 }
@@ -353,19 +361,50 @@ impl ComparisonResult {
 impl Display for ComparisonResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         debug!("Display for comparison reulst");
-        match self {
-            ComparisonResult::NotFound(d, b, s) => {
-                write!(f, "NotFound: deployment {d} at block {b}: {s}")
+        match self.result_type {
+            ComparisonResultType::NotFound => {
+                if self.local_attestation.is_none() {
+                    write!(
+                        f,
+                        "{} for local attestation: deployment {} at block {}",
+                        self.result_type,
+                        self.deployment_hash(),
+                        self.block()
+                    )
+                } else {
+                    write!(
+                        f,
+                        "{} for remote attestations: deployment {} at block {}",
+                        self.result_type,
+                        self.deployment_hash(),
+                        self.block()
+                    )
+                }
             }
-            ComparisonResult::Divergent(d, b, s) => {
-                write!(f, "Divergent: deployment {d} at block {b}: {s}")
+            ComparisonResultType::Divergent => {
+                write!(
+                    f,
+                    "{}: deployment {} at block {}",
+                    self.result_type,
+                    self.deployment_hash(),
+                    self.block()
+                )
             }
-            ComparisonResult::Match(d, b, s) => {
-                write!(f, "Matched: deployment {d} at block {b}: {s}")
+            ComparisonResultType::Match => {
+                write!(
+                    f,
+                    "{}: deployment {} at block {}",
+                    self.result_type,
+                    self.deployment_hash(),
+                    self.block()
+                )
             }
-            ComparisonResult::BuildFailed(d, b, s) => write!(
+            ComparisonResultType::BuildFailed => write!(
                 f,
-                "Failed to build message: deployment {d} at block {b}: {s}"
+                "{}: deployment {} at block {}",
+                self.result_type,
+                self.deployment_hash(),
+                self.block()
             ),
         }
     }
@@ -373,18 +412,12 @@ impl Display for ComparisonResult {
 
 impl Clone for ComparisonResult {
     fn clone(&self) -> Self {
-        debug!("Clone for comparison reulst");
-        match self {
-            ComparisonResult::NotFound(a, b, c) => {
-                ComparisonResult::NotFound(a.clone(), *b, c.clone())
-            }
-            ComparisonResult::Divergent(a, b, c) => {
-                ComparisonResult::Divergent(a.clone(), *b, c.clone())
-            }
-            ComparisonResult::Match(a, b, c) => ComparisonResult::Match(a.clone(), *b, c.clone()),
-            ComparisonResult::BuildFailed(a, b, c) => {
-                ComparisonResult::BuildFailed(a.clone(), *b, c.clone())
-            }
+        ComparisonResult {
+            deployment: self.deployment_hash(),
+            block_number: self.block(),
+            result_type: self.result_type,
+            local_attestation: self.local_attestation.clone(),
+            attestations: self.attestations.clone(),
         }
     }
 }
@@ -395,7 +428,6 @@ impl Clone for ComparisonResult {
 /// with the same NPOI from an Indexer (NOTE: one Indexer can only send 1 attestation per subgraph per block). The attestations are then sorted
 /// and we take the one with the highest total stake-weight.
 pub async fn compare_attestations(
-    network_name: NetworkName,
     attestation_block: u64,
     remote: RemoteAttestationsMap,
     local: Arc<AsyncMutex<LocalAttestationsMap>>,
@@ -412,42 +444,60 @@ pub async fn compare_attestations(
     let blocks = match local.get(ipfs_hash) {
         Some(blocks) => blocks,
         None => {
-            return ComparisonResult::NotFound(
-                ipfs_hash.to_string(),
-                attestation_block,
-                String::from("No local attestation found"),
-            )
+            debug!("No local attestation blocks stored for {}", ipfs_hash);
+            return ComparisonResult {
+                deployment: ipfs_hash.to_string(),
+                block_number: attestation_block,
+                result_type: ComparisonResultType::NotFound,
+                local_attestation: None,
+                attestations: vec![],
+            };
         }
     };
     let local_attestation = match blocks.get(&attestation_block) {
         Some(attestations) => attestations,
         None => {
-            return ComparisonResult::NotFound(
-                ipfs_hash.to_string(),
-                attestation_block,
-                "No local attestation found for the deployment".to_string(),
-            )
+            debug!(
+                "No local attestation stored for {} on block {}",
+                ipfs_hash, attestation_block
+            );
+            return ComparisonResult {
+                deployment: ipfs_hash.to_string(),
+                block_number: attestation_block,
+                result_type: ComparisonResultType::NotFound,
+                local_attestation: None,
+                attestations: vec![],
+            };
         }
     };
 
     let remote_blocks = match remote.get(ipfs_hash) {
         Some(blocks) => blocks,
         None => {
-            return ComparisonResult::NotFound(
-                ipfs_hash.to_string(),
-                attestation_block,
-                "No remote attestation found for the block".to_string(),
-            )
+            debug!("No remote attestation blocks stored for {}", ipfs_hash);
+            return ComparisonResult {
+                deployment: ipfs_hash.to_string(),
+                block_number: attestation_block,
+                result_type: ComparisonResultType::NotFound,
+                local_attestation: Some(local_attestation.clone()),
+                attestations: vec![],
+            };
         }
     };
     let remote_attestations = match remote_blocks.get(&attestation_block) {
         Some(attestations) if !attestations.is_empty() => attestations,
         _ => {
-            return ComparisonResult::NotFound(
-                ipfs_hash.to_string(),
-                attestation_block,
-                "No remote attestation found".to_string(),
-            )
+            debug!(
+                "No remote attestation stored for {} on block {}",
+                ipfs_hash, attestation_block
+            );
+            return ComparisonResult {
+                deployment: ipfs_hash.to_string(),
+                block_number: attestation_block,
+                result_type: ComparisonResultType::NotFound,
+                local_attestation: Some(local_attestation.clone()),
+                attestations: vec![],
+            };
         }
     };
 
@@ -474,19 +524,25 @@ pub async fn compare_attestations(
             attestation_block,
             remote_attestations.len(),
         );
-        ComparisonResult::Match(
-            ipfs_hash.to_string(),
-            attestation_block,
-            format!("nPOIs matched!: {most_attested_npoi}"),
-        )
+        ComparisonResult {
+            deployment: ipfs_hash.to_string(),
+            block_number: attestation_block,
+            result_type: ComparisonResultType::Match,
+            local_attestation: Some(local_attestation.clone()),
+            attestations: remote_attestations,
+        }
     } else {
         info!(
             "Number of nPOI submitted for block {}: {:#?}\n{}: {:#?}",
             attestation_block, remote_attestations, "Local attestation", local_attestation
         );
-        ComparisonResult::Divergent(ipfs_hash.to_string(), attestation_block, format!(
-            "❗ POIs didn't match! Network: {network_name}\nLocal attestation:\n{local_attestation:#?}\n\nRemote attestations:\n{remote_attestations:#?}"
-        ))
+        ComparisonResult {
+            deployment: ipfs_hash.to_string(),
+            block_number: attestation_block,
+            result_type: ComparisonResultType::Divergent,
+            local_attestation: Some(local_attestation.clone()),
+            attestations: remote_attestations,
+        }
     }
 }
 
@@ -525,8 +581,17 @@ pub async fn log_summary(
     messages_sent: Vec<Result<String, OperationError>>,
     result_strings: Vec<Result<ComparisonResult, OperationError>>,
     radio_name: &str,
-    config: &Config,
 ) {
+    let slack_token = CONFIG.get().unwrap().lock().unwrap().slack_token.clone();
+    let slack_channel = CONFIG.get().unwrap().lock().unwrap().slack_channel.clone();
+    let discord_webhook = CONFIG
+        .get()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .discord_webhook
+        .clone();
+
     // Generate send summary
     let mut send_success = vec![];
     let mut trigger_failed = vec![];
@@ -551,35 +616,37 @@ pub async fn log_summary(
 
     for result in result_strings {
         match result {
-            Ok(ComparisonResult::Match(d, b, s)) => {
-                match_strings.push(format!("deployment {} at block {}: {}", d, b, s));
+            Ok(x) if x.result_type == ComparisonResultType::Match => {
+                match_strings.push(x.to_string());
             }
-            Ok(ComparisonResult::NotFound(d, b, s)) => {
-                not_found_strings.push(format!("deployment {} at block {}: {}", d, b, s));
+            Ok(x) if x.result_type == ComparisonResultType::NotFound => {
+                not_found_strings.push(x.to_string());
             }
-            Ok(ComparisonResult::Divergent(d, b, s)) => {
-                error!("{}", s);
-                if let (Some(token), Some(channel)) = (&config.slack_token, &config.slack_channel) {
-                    if let Err(e) =
-                        SlackBot::send_webhook(token.to_string(), channel, radio_name, s.as_str())
-                            .await
+            Ok(x) if x.result_type == ComparisonResultType::Divergent => {
+                error!("{}", x.to_string());
+                if let (Some(token), Some(channel)) = (&slack_token, &slack_channel) {
+                    if let Err(e) = SlackBot::send_webhook(
+                        token.to_string(),
+                        channel,
+                        radio_name,
+                        &x.to_string(),
+                    )
+                    .await
                     {
                         warn!("Failed to send notification to Slack: {}", e);
                     }
                 }
 
-                if let Some(webhook_url) = config.discord_webhook.clone() {
+                if let Some(webhook_url) = discord_webhook.clone() {
                     if let Err(e) =
-                        DiscordBot::send_webhook(&webhook_url, radio_name, s.as_str()).await
+                        DiscordBot::send_webhook(&webhook_url, radio_name, &x.to_string()).await
                     {
                         warn!("Failed to send notification to Discord: {}", e);
                     }
                 }
-                divergent_strings.push(format!("deployment {} at block {}: {}", d, b, s));
+                divergent_strings.push(x.to_string());
             }
-            Ok(ComparisonResult::BuildFailed(d, b, s)) => {
-                attestation_failed.push(format!("deployment {} at block {}: {}", d, b, s))
-            }
+            Ok(x) => attestation_failed.push(x.to_string()),
             Err(OperationError::CompareTrigger(_, _, e)) => cmp_trigger_failed.push(e.to_string()),
             // Share with the compareResult::BuildFailed
             Err(OperationError::Attestation(e)) => attestation_failed.push(e.to_string()),
@@ -625,6 +692,12 @@ pub enum AttestationError {
     BuildError(BuildMessageError),
     #[error("Failed to update attestation: {0}")]
     UpdateError(String),
+}
+
+impl ErrorExtensions for AttestationError {
+    fn extend(&self) -> Error {
+        Error::new(format!("{}", self))
+    }
 }
 
 #[cfg(test)]
@@ -776,7 +849,6 @@ mod tests {
     #[tokio::test]
     async fn test_compare_attestations_generic_fail() {
         let res = compare_attestations(
-            NetworkName::Goerli,
             42,
             HashMap::new(),
             Arc::new(AsyncMutex::new(HashMap::new())),
@@ -786,7 +858,7 @@ mod tests {
 
         assert_eq!(
             res.to_string(),
-            "NotFound: deployment non-existent-ipfs-hash at block 42: No local attestation found"
+            "NotFound for local attestation: deployment non-existent-ipfs-hash at block 42"
                 .to_string()
         );
     }
@@ -819,7 +891,6 @@ mod tests {
         local_attestations.insert("different-awesome-hash".to_string(), local_blocks);
 
         let res = compare_attestations(
-            NetworkName::Goerli,
             42,
             remote_attestations,
             Arc::new(AsyncMutex::new(local_attestations)),
@@ -829,7 +900,7 @@ mod tests {
 
         assert_eq!(
             res.to_string(),
-            "NotFound: deployment different-awesome-hash at block 42: No remote attestation found for the block"
+            "NotFound for remote attestations: deployment different-awesome-hash at block 42"
                 .to_string()
         );
     }
@@ -847,7 +918,6 @@ mod tests {
         local_attestations.insert("my-awesome-hash".to_string(), local_blocks);
 
         let res = compare_attestations(
-            NetworkName::Goerli,
             42,
             remote_attestations,
             Arc::new(AsyncMutex::new(local_attestations)),
@@ -857,8 +927,7 @@ mod tests {
 
         assert_eq!(
             res.to_string(),
-            "NotFound: deployment my-awesome-hash at block 42: No local attestation found for the deployment"
-                .to_string()
+            "NotFound for local attestation: deployment my-awesome-hash at block 42".to_string()
         );
     }
 
@@ -867,20 +936,16 @@ mod tests {
         let mut remote_blocks: HashMap<u64, Vec<Attestation>> = HashMap::new();
         let mut local_blocks: HashMap<u64, Attestation> = HashMap::new();
 
-        remote_blocks.insert(
-            42,
-            vec![Attestation::new(
-                "awesome-npoi".to_string(),
-                0.0,
-                vec!["0xa1".to_string()],
-                vec![0],
-            )],
+        let remote = Attestation::new(
+            "awesome-npoi".to_string(),
+            0.0,
+            vec!["0xa1".to_string()],
+            vec![0],
         );
+        remote_blocks.insert(42, vec![remote.clone()]);
 
-        local_blocks.insert(
-            42,
-            Attestation::new("awesome-npoi".to_string(), 0.0, Vec::new(), vec![0]),
-        );
+        let local = Attestation::new("awesome-npoi".to_string(), 0.0, Vec::new(), vec![0]);
+        local_blocks.insert(42, local.clone());
 
         let mut remote_attestations: HashMap<String, HashMap<u64, Vec<Attestation>>> =
             HashMap::new();
@@ -890,7 +955,6 @@ mod tests {
         local_attestations.insert("my-awesome-hash".to_string(), local_blocks);
 
         let res = compare_attestations(
-            NetworkName::Goerli,
             42,
             remote_attestations,
             Arc::new(AsyncMutex::new(local_attestations)),
@@ -900,11 +964,13 @@ mod tests {
 
         assert_eq!(
             res,
-            ComparisonResult::Match(
-                "my-awesome-hash".to_string(),
-                42,
-                "nPOIs matched!: awesome-npoi".to_string()
-            )
+            ComparisonResult {
+                deployment: "my-awesome-hash".to_string(),
+                block_number: 42,
+                result_type: ComparisonResultType::Match,
+                local_attestation: Some(local.clone()),
+                attestations: vec![remote.clone()],
+            }
         );
     }
 

@@ -25,7 +25,6 @@ use graphcast_sdk::{
 use poi_radio::attestation::log_summary;
 use poi_radio::metrics::{handle_serve_metrics, CACHED_MESSAGES};
 use poi_radio::server::run_server;
-use poi_radio::shutdown_signal;
 use poi_radio::OperationError;
 use poi_radio::{
     attestation::{
@@ -35,6 +34,7 @@ use poi_radio::{
     chainhead_block_str, generate_topics, radio_msg_handler, RadioPayloadMessage, GRAPHCAST_AGENT,
     MESSAGES,
 };
+use poi_radio::{shutdown_signal, CONFIG};
 
 pub mod attestation;
 mod graphql;
@@ -86,17 +86,21 @@ async fn main() {
         my_stake
     );
 
-    let generate_topics = partial!(generate_topics => config.coverage.clone(), config.network_subgraph.clone(), my_address.clone(), config.graph_node_endpoint.clone(), &config.topics);
+    let topic_coverage = config.coverage.clone();
+    let topic_network = config.network_subgraph.clone();
+    let topic_graph_node = config.graph_node_endpoint.clone();
+    let topic_static = &config.topics.clone();
+    let generate_topics = partial!(generate_topics => topic_coverage.clone(), topic_network.clone(), my_address.clone(), topic_graph_node.clone(), topic_static);
     let topics = generate_topics().await;
     info!("Found content topics for subscription: {:?}", topics);
 
-    debug!("Initializing the Graphcast Agent");
+    debug!("Initializing Graphcast Agent");
     _ = GRAPHCAST_AGENT.set(
         GraphcastAgent::new(
             config.wallet_input().unwrap().to_string(),
             radio_name,
-            &config.registry_subgraph,
-            &config.network_subgraph,
+            &config.registry_subgraph.clone(),
+            &config.network_subgraph.clone(),
             &config.graph_node_endpoint,
             config.boot_node_addresses.clone(),
             Some(&config.graphcast_network),
@@ -110,6 +114,7 @@ async fn main() {
         .await
         .expect("Initialize Graphcast agent"),
     );
+    debug!("Initialized Graphcast Agent");
     _ = MESSAGES.set(Arc::new(SyncMutex::new(vec![])));
 
     GRAPHCAST_AGENT
@@ -120,17 +125,10 @@ async fn main() {
     let local_attestations: Arc<AsyncMutex<LocalAttestationsMap>> =
         Arc::new(AsyncMutex::new(HashMap::new()));
 
+    _ = CONFIG.set(Arc::new(SyncMutex::new(config)));
     let running = Arc::new(AtomicBool::new(true));
-    if let Some(port) = config.server_port {
-        tokio::spawn(run_server(
-            config
-                .server_host
-                .clone()
-                .unwrap_or(String::from("0.0.0.0")),
-            port,
-            running.clone(),
-            Arc::clone(&local_attestations),
-        ));
+    if CONFIG.get().unwrap().lock().unwrap().server_port.is_some() {
+        tokio::spawn(run_server(running.clone(), Arc::clone(&local_attestations)));
     }
 
     // Main loop for sending messages, can factor out
@@ -149,18 +147,23 @@ async fn main() {
         }
         // Update all the chainheads of the network
         // Also get a hash map returned on the subgraph mapped to network name and latest block
-        let subgraph_network_latest_blocks = match update_chainhead_blocks(
-            config.graph_node_endpoint.clone(),
-            &mut *network_chainhead_blocks.lock().await,
-        )
-        .await
-        {
-            Ok(res) => res,
-            Err(e) => {
-                error!("Could not query indexing statuses, pull again later: {e}");
-                continue;
-            }
-        };
+        let graph_node = CONFIG
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .graph_node_endpoint
+            .clone();
+        let subgraph_network_latest_blocks =
+            match update_chainhead_blocks(graph_node, &mut *network_chainhead_blocks.lock().await)
+                .await
+            {
+                Ok(res) => res,
+                Err(e) => {
+                    error!("Could not query indexing statuses, pull again later: {e}");
+                    continue;
+                }
+            };
 
         trace!(
             "Subgraph network and latest blocks: {:#?}",
@@ -188,6 +191,12 @@ async fn main() {
         let mut compare_handles = vec![];
         for id in identifiers {
             /* Set up */
+            let collect_duration = CONFIG
+                .get()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .collect_message_duration;
             let local_attestations = Arc::clone(&local_attestations);
             let (network_name, latest_block, message_block, compare_block, collect_window_end) =
                 if let Ok(params) = message_set_up(
@@ -195,7 +204,7 @@ async fn main() {
                     &network_chainhead_blocks,
                     &subgraph_network_latest_blocks,
                     Arc::clone(&local_attestations),
-                    config.collect_message_duration,
+                    collect_duration,
                 )
                 .await
                 {
@@ -223,8 +232,20 @@ async fn main() {
                 .await
             });
 
-            let registry_subgraph = config.registry_subgraph.clone();
-            let network_subgraph = config.network_subgraph.clone();
+            let registry_subgraph = CONFIG
+                .get()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .registry_subgraph
+                .clone();
+            let network_subgraph = CONFIG
+                .get()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .network_subgraph
+                .clone();
             let local = Arc::clone(&local_attestations);
             let msgs = MESSAGES.get().unwrap().lock().unwrap().to_vec();
             let filtered_msg = msgs
@@ -242,7 +263,6 @@ async fn main() {
                     compare_block,
                     registry_subgraph.clone(),
                     network_subgraph.clone(),
-                    network_name,
                     filtered_msg,
                     local,
                 )
@@ -271,30 +291,34 @@ async fn main() {
                         // Only clear the ones matching identifier and block number equal or less
                         // Retain the msgs with a different identifier, or if their block number is greater
                         let local = Arc::clone(&local_attestations);
-                        clear_local_attestation(local, r.deployment(), r.block()).await;
-                        CACHED_MESSAGES.with_label_values(&[&r.deployment()]).set(
-                            MESSAGES
-                                .get()
-                                .unwrap()
-                                .lock()
-                                .unwrap()
-                                .len()
-                                .try_into()
-                                .unwrap(),
-                        );
+                        clear_local_attestation(local, r.deployment_hash(), r.block()).await;
+                        CACHED_MESSAGES
+                            .with_label_values(&[&r.deployment_hash()])
+                            .set(
+                                MESSAGES
+                                    .get()
+                                    .unwrap()
+                                    .lock()
+                                    .unwrap()
+                                    .len()
+                                    .try_into()
+                                    .unwrap(),
+                            );
                         MESSAGES.get().unwrap().lock().unwrap().retain(|msg| {
-                            msg.block_number >= r.block() || msg.identifier != r.deployment()
+                            msg.block_number >= r.block() || msg.identifier != r.deployment_hash()
                         });
-                        CACHED_MESSAGES.with_label_values(&[&r.deployment()]).set(
-                            MESSAGES
-                                .get()
-                                .unwrap()
-                                .lock()
-                                .unwrap()
-                                .len()
-                                .try_into()
-                                .unwrap(),
-                        );
+                        CACHED_MESSAGES
+                            .with_label_values(&[&r.deployment_hash()])
+                            .set(
+                                MESSAGES
+                                    .get()
+                                    .unwrap()
+                                    .lock()
+                                    .unwrap()
+                                    .len()
+                                    .try_into()
+                                    .unwrap(),
+                            );
                     }
                     Err(e) => {
                         warn!("Compare handles: {}", e.to_string());
@@ -303,15 +327,7 @@ async fn main() {
                 }
             }
         }
-        log_summary(
-            blocks_str,
-            num_topics,
-            send_ops,
-            compare_ops,
-            radio_name,
-            &config,
-        )
-        .await;
+        log_summary(blocks_str, num_topics, send_ops, compare_ops, radio_name).await;
         sleep(Duration::from_secs(5));
         continue;
     }
@@ -502,7 +518,6 @@ pub async fn message_comparison(
     compare_block: Option<u64>,
     registry_subgraph: String,
     network_subgraph: String,
-    network_name: NetworkName,
     messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
     local_attestations: Arc<AsyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
 ) -> Result<ComparisonResult, OperationError> {
@@ -514,23 +529,6 @@ pub async fn message_comparison(
         .filter(|&m| Some(m.block_number) == compare_block && Some(m.nonce) <= collect_window_end)
         .cloned()
         .collect();
-
-    if filter_msg.is_empty() {
-        let err_msg = format!(
-            "Deployment {} comparison not triggered: No valid remote messages cached for the block: {}",
-            id.clone(),
-            match compare_block {
-                None => String::from("None"),
-                Some(x) => x.to_string(),
-            }
-        );
-        debug!("{}", err_msg);
-        return Ok(ComparisonResult::NotFound(
-            id.clone(),
-            compare_block.unwrap_or_default(),
-            err_msg,
-        ));
-    }
 
     let (compare_block, _collect_window_end) = match (compare_block, collect_window_end) {
         (Some(block), Some(window)) if time >= window && latest_block > block => (block, window),
@@ -551,7 +549,7 @@ pub async fn message_comparison(
         id.clone(),
         "Block",
         compare_block,
-        "Number of messages",
+        "Number of matching messages cached",
         filter_msg.len(),
     );
     let remote_attestations_result =
@@ -574,7 +572,6 @@ pub async fn message_comparison(
         }
     };
     let comparison_result = compare_attestations(
-        network_name,
         compare_block,
         remote_attestations,
         Arc::clone(&local_attestations),
