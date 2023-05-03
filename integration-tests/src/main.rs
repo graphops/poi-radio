@@ -4,7 +4,7 @@ pub mod utils;
 
 use checks::simple_tests::run_simple_tests;
 use dotenv::dotenv;
-use graphcast_sdk::config::Config;
+use poi_radio::config::Config;
 use poi_radio::CONFIG;
 use setup::basic::run_basic_instance;
 use std::sync::{Arc, Mutex as SyncMutex};

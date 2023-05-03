@@ -8,7 +8,7 @@ use chrono::Utc;
 
 use ethers::signers::{LocalWallet, Signer};
 use graphcast_sdk::graphcast_agent::message_typing::{BuildMessageError, GraphcastMessage};
-use graphcast_sdk::graphcast_agent::{GraphcastAgent, GraphcastAgentError};
+use graphcast_sdk::graphcast_agent::{GraphcastAgent, GraphcastAgentConfig, GraphcastAgentError};
 use graphcast_sdk::graphql::client_graph_node::update_chainhead_blocks;
 use graphcast_sdk::graphql::client_network::query_network_subgraph;
 use graphcast_sdk::graphql::client_registry::query_registry_indexer;
@@ -133,25 +133,24 @@ pub async fn run_test_radio<S, A, P>(
         my_stake
     );
 
-    let graphcast_agent = GraphcastAgent::new(
+    let graphcast_agent_config = GraphcastAgentConfig::new(
         private_key,
         radio_name,
-        &registry_subgraph,
-        &network_subgraph,
-        &graph_node_endpoint,
-        vec![],
-        Some("testnet"),
-        runtime_config.subgraphs.clone().unwrap_or(vec![
-            MOCK_SUBGRAPH_MAINNET.to_string(),
-            MOCK_SUBGRAPH_GOERLI.to_string(),
-        ]),
+        registry_subgraph.clone(),
+        network_subgraph.clone(),
+        graph_node_endpoint.clone(),
+        None,
+        Some("testnet".to_owned()),
+        runtime_config.subgraphs.clone(),
         None,
         None,
         Some(get_random_port()),
         None,
     )
     .await
-    .unwrap();
+    .expect("Failed to create GraphcastAgentConfig");
+
+    let graphcast_agent = GraphcastAgent::new(graphcast_agent_config).await.unwrap();
 
     _ = GRAPHCAST_AGENT.set(graphcast_agent);
     _ = MESSAGES.set(Arc::new(SyncMutex::new(vec![])));

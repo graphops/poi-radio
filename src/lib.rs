@@ -1,5 +1,6 @@
 use async_graphql::{Error, ErrorExtensions, SimpleObject};
 use autometrics::autometrics;
+use config::{Config, CoverageLevel};
 use ethers_contract::EthAbiType;
 use ethers_core::types::transaction::eip712::Eip712;
 use ethers_derive_eip712::*;
@@ -17,9 +18,7 @@ use tokio::signal;
 use tracing::{error, trace};
 
 use graphcast_sdk::{
-    config::{Config, CoverageLevel},
-    graphcast_agent::GraphcastAgentError,
-    graphql::client_graph_node::get_indexing_statuses,
+    graphcast_agent::GraphcastAgentError, graphql::client_graph_node::get_indexing_statuses,
 };
 use graphcast_sdk::{
     graphcast_agent::{
@@ -34,6 +33,7 @@ use crate::attestation::AttestationError;
 use crate::metrics::{CACHED_MESSAGES, VALIDATED_MESSAGES};
 
 pub mod attestation;
+pub mod config;
 pub mod graphql;
 pub mod metrics;
 pub mod server;

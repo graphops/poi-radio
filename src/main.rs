@@ -1,6 +1,7 @@
 use autometrics::autometrics;
 use chrono::Utc;
 use dotenv::dotenv;
+use poi_radio::config::Config;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,7 +12,6 @@ use tracing::log::warn;
 use tracing::{debug, error, info, trace};
 
 use crate::graphql::query_graph_node_poi;
-use graphcast_sdk::config::Config;
 use graphcast_sdk::graphcast_agent::message_typing::{BuildMessageError, GraphcastMessage};
 use graphcast_sdk::graphcast_agent::{GraphcastAgent, GraphcastAgentError};
 use graphcast_sdk::graphql::client_graph_node::update_chainhead_blocks;
@@ -37,6 +37,7 @@ use poi_radio::{
 use poi_radio::{shutdown_signal, CONFIG};
 
 pub mod attestation;
+pub mod config;
 mod graphql;
 pub mod metrics;
 pub mod server;
@@ -50,11 +51,11 @@ async fn main() {
     dotenv().ok();
 
     // Parse basic configurations
-    let config = Config::args();
+    let radio_config = Config::args();
 
-    if let Some(port) = config.metrics_port {
+    if let Some(port) = radio_config.metrics_port {
         tokio::spawn(handle_serve_metrics(
-            config
+            radio_config
                 .metrics_host
                 .clone()
                 .unwrap_or(String::from("0.0.0.0")),
@@ -62,59 +63,52 @@ async fn main() {
         ));
     }
 
-    if let Err(e) = config.validate_set_up().await {
-        panic!("Could not validate the supplied configurations: {e}")
-    }
+    debug!("Initializing Graphcast Agent");
+
+    let graphcast_agent_config = radio_config
+        .to_graphcast_agent_config(radio_name)
+        .await
+        .unwrap_or_else(|e| panic!("Could not create GraphcastAgentConfig: {e}"));
+
+    _ = GRAPHCAST_AGENT.set(
+        GraphcastAgent::new(graphcast_agent_config)
+            .await
+            .expect("Initialize Graphcast agent"),
+    );
+
+    debug!("Initialized Graphcast Agent");
 
     // Using unwrap directly as the query has been ran in the set-up validation
-    let wallet = build_wallet(config.wallet_input().unwrap()).unwrap();
+    let wallet = build_wallet(radio_config.wallet_input().unwrap()).unwrap();
     // The query here must be Ok but so it is okay to panic here
     // Alternatively, make validate_set_up return wallet, address, and stake
     let my_address = query_registry_indexer(
-        config.registry_subgraph.to_string(),
+        radio_config.registry_subgraph.to_string(),
         graphcast_id_address(&wallet),
     )
     .await
     .unwrap();
-    let my_stake = query_network_subgraph(config.network_subgraph.to_string(), my_address.clone())
-        .await
-        .unwrap()
-        .indexer_stake();
+    let my_stake = query_network_subgraph(
+        radio_config.network_subgraph.to_string(),
+        my_address.clone(),
+    )
+    .await
+    .unwrap()
+    .indexer_stake();
     info!(
         "Initializing radio to act on behalf of indexer {:#?} with stake {}",
         my_address.clone(),
         my_stake
     );
 
-    let topic_coverage = config.coverage.clone();
-    let topic_network = config.network_subgraph.clone();
-    let topic_graph_node = config.graph_node_endpoint.clone();
-    let topic_static = &config.topics.clone();
+    let topic_coverage = radio_config.coverage.clone();
+    let topic_network = radio_config.network_subgraph.clone();
+    let topic_graph_node = radio_config.graph_node_endpoint.clone();
+    let topic_static = &radio_config.topics.clone();
     let generate_topics = partial!(generate_topics => topic_coverage.clone(), topic_network.clone(), my_address.clone(), topic_graph_node.clone(), topic_static);
     let topics = generate_topics().await;
-    info!("Found content topics for subscription: {:?}", topics);
 
-    debug!("Initializing Graphcast Agent");
-    _ = GRAPHCAST_AGENT.set(
-        GraphcastAgent::new(
-            config.wallet_input().unwrap().to_string(),
-            radio_name,
-            &config.registry_subgraph.clone(),
-            &config.network_subgraph.clone(),
-            &config.graph_node_endpoint,
-            config.boot_node_addresses.clone(),
-            Some(&config.graphcast_network),
-            topics,
-            // Maybe move Waku specific configs to a sub-group
-            config.waku_node_key.clone(),
-            config.waku_host.clone(),
-            config.waku_port.clone(),
-            None,
-        )
-        .await
-        .expect("Initialize Graphcast agent"),
-    );
-    debug!("Initialized Graphcast Agent");
+    info!("Found content topics for subscription: {:?}", topics);
     _ = MESSAGES.set(Arc::new(SyncMutex::new(vec![])));
 
     GRAPHCAST_AGENT
@@ -125,7 +119,7 @@ async fn main() {
     let local_attestations: Arc<AsyncMutex<LocalAttestationsMap>> =
         Arc::new(AsyncMutex::new(HashMap::new()));
 
-    _ = CONFIG.set(Arc::new(SyncMutex::new(config)));
+    _ = CONFIG.set(Arc::new(SyncMutex::new(radio_config)));
     let running = Arc::new(AtomicBool::new(true));
     if CONFIG.get().unwrap().lock().unwrap().server_port.is_some() {
         tokio::spawn(run_server(running.clone(), Arc::clone(&local_attestations)));
