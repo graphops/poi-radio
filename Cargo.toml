@@ -49,7 +49,7 @@ tower-http = { version = "0.4.0", features = ["trace", "cors"] }
 async-graphql = "4.0.16"
 async-graphql-axum = "4.0.16"
 metrics = "0.20.1"
-metrics-exporter-prometheus = "0.11.0"
+metrics-exporter-prometheus = "0.12.0"
 opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }
 opentelemetry-jaeger = { version = "0.17.0", features = ["rt-tokio"] }
 tracing-opentelemetry = "0.18.0"
