@@ -13,8 +13,8 @@ fi
 git-cliff -o CHANGELOG.md
 
 (
-  git add CHANGELOG.md \
-    && git commit -m "chore: release v$VERSION"
+  git add CHANGELOG.md Cargo.lock Cargo.toml \
+    && git commit -m "chore: release $VERSION"
 ) || true
 
 # Publish to crates.io
