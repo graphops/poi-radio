@@ -36,6 +36,7 @@ pub mod attestation;
 pub mod config;
 pub mod graphql;
 pub mod metrics;
+pub mod operation;
 pub mod server;
 
 pub type MessagesVec = OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>>;
@@ -53,6 +54,8 @@ pub static MESSAGES: OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMes
 
 /// Radio's global config
 pub static CONFIG: OnceCell<Arc<SyncMutex<Config>>> = OnceCell::new();
+
+pub static RADIO_NAME: OnceCell<&str> = OnceCell::new();
 
 #[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize, PartialEq, SimpleObject)]
 #[eip712(

@@ -1,7 +1,6 @@
 use async_graphql::{Enum, Error, ErrorExtensions, SimpleObject};
 use autometrics::autometrics;
 use chrono::Utc;
-
 use num_traits::Zero;
 use sha3::{Digest, Sha3_256};
 use std::{

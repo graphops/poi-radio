@@ -56,6 +56,18 @@ clap = { version = "3.2.23", features = ["derive", "env"] }
 name = "integration-tests"
 path = "integration-tests/src/main.rs"
 
+[dev-dependencies]
+criterion = {version = "0.4", features = [ "async", "async_futures" ]}
+rand = "0.8"
+
+[[bench]]
+name = "attestations"
+harness = false
+
+[[bench]]
+name = "gossips"
+harness = false
+
 [dev-dependencies.cargo-husky]
 version = "1"
 default-features = false
@@ -65,3 +77,7 @@ features = ["precommit-hook", "run-cargo-fmt", "run-cargo-clippy"]
 [profile.dev]
 debug = true
 debuginfo = 2
+
+[profile.release]
+panic = 'unwind'
+opt-level = 3
