@@ -20,18 +20,18 @@ use poi_radio::config::Config;
 use poi_radio::metrics::handle_serve_metrics;
 use poi_radio::operation::gossip_poi;
 use poi_radio::server::run_server;
-use poi_radio::CONFIG;
 use poi_radio::{
     attestation::LocalAttestationsMap, chainhead_block_str, generate_topics, radio_msg_handler,
     GRAPHCAST_AGENT, MESSAGES,
 };
+use poi_radio::{CONFIG, RADIO_NAME};
 
 #[macro_use]
 extern crate partial_application;
 
 #[tokio::main]
 async fn main() {
-    let radio_name: &str = "poi-radio";
+    _ = RADIO_NAME.set("poi-radio");
     dotenv().ok();
 
     // Parse basic configurations
@@ -50,7 +50,7 @@ async fn main() {
     debug!("Initializing Graphcast Agent");
 
     let graphcast_agent_config = radio_config
-        .to_graphcast_agent_config(radio_name)
+        .to_graphcast_agent_config(RADIO_NAME.get().expect("RADIO_NAME required."))
         .await
         .unwrap_or_else(|e| panic!("Could not create GraphcastAgentConfig: {e}"));
 

@@ -26,7 +26,7 @@ use poi_radio::graphql::query_graph_node_poi;
 use poi_radio::metrics::{handle_serve_metrics, CACHED_MESSAGES};
 use poi_radio::{
     attestation::Attestation, chainhead_block_str, radio_msg_handler, MessagesVec, OperationError,
-    RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES,
+    RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES, RADIO_NAME,
 };
 use rand::{thread_rng, Rng};
 use secp256k1::SecretKey;
@@ -117,7 +117,7 @@ pub async fn run_test_radio<S, A, P>(
     let private_key = env::var("PRIVATE_KEY").unwrap();
 
     // TODO: Add something random and unique here to avoid noise form other operators
-    let radio_name: &str = "test-poi-radio";
+    _ = RADIO_NAME.set("test-poi-radio");
 
     let my_address =
         query_registry_indexer(registry_subgraph.clone(), graphcast_id_address(&wallet))
@@ -135,7 +135,7 @@ pub async fn run_test_radio<S, A, P>(
 
     let graphcast_agent_config = GraphcastAgentConfig::new(
         private_key,
-        radio_name,
+        RADIO_NAME.get().expect("RADIO_NAME required"),
         registry_subgraph.clone(),
         network_subgraph.clone(),
         graph_node_endpoint.clone(),
@@ -346,7 +346,14 @@ pub async fn run_test_radio<S, A, P>(
             }
         }
 
-        log_summary(blocks_str, num_topics, send_ops, compare_ops, radio_name).await;
+        log_summary(
+            blocks_str,
+            num_topics,
+            send_ops,
+            compare_ops,
+            RADIO_NAME.get().unwrap(),
+        )
+        .await;
 
         setup_mock_server(
             round_to_nearest(Utc::now().timestamp()).try_into().unwrap(),
