@@ -1,22 +1,22 @@
 use autometrics::autometrics;
 use chrono::Utc;
-
 use std::cmp::max;
 use std::collections::HashMap;
-
 use std::sync::Arc;
-
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::log::warn;
 use tracing::{debug, error, trace};
 
-use graphcast_sdk::graphcast_agent::message_typing::{BuildMessageError, GraphcastMessage};
-use graphcast_sdk::graphcast_agent::{GraphcastAgent, GraphcastAgentError};
+use graphcast_sdk::{
+    determine_message_block,
+    graphcast_agent::{
+        message_typing::{BuildMessageError, GraphcastMessage},
+        GraphcastAgent, GraphcastAgentError,
+    },
+    networks::NetworkName,
+    BlockPointer, NetworkBlockError, NetworkPointer,
+};
 
-use graphcast_sdk::networks::NetworkName;
-use graphcast_sdk::{determine_message_block, BlockPointer, NetworkBlockError, NetworkPointer};
-
-use crate::CONFIG;
 use crate::{
     attestation::{
         clear_local_attestation, compare_attestations, local_comparison_point, log_summary,
@@ -25,7 +25,7 @@ use crate::{
     chainhead_block_str,
     graphql::query_graph_node_poi,
     metrics::CACHED_MESSAGES,
-    OperationError, RadioPayloadMessage, GRAPHCAST_AGENT, MESSAGES, RADIO_NAME,
+    OperationError, RadioPayloadMessage, CONFIG, GRAPHCAST_AGENT, MESSAGES, RADIO_NAME,
 };
 
 /// Determine the parameters for messages to send and compare
@@ -349,7 +349,6 @@ pub async fn gossip_poi(
             .filter(|&m| m.identifier == id.clone())
             .cloned()
             .collect();
-        debug!("filted by id to get {:#?}", filtered_msg);
 
         let compare_handle = tokio::spawn(async move {
             message_comparison(

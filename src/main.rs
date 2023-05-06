@@ -1,30 +1,33 @@
-use chrono::Utc;
 use dotenv::dotenv;
-use graphcast_sdk::graphql::client_graph_node::update_chainhead_blocks;
-use graphcast_sdk::networks::NetworkName;
-
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex as SyncMutex};
-use std::{thread::sleep, time::Duration};
-use tokio::sync::Mutex as AsyncMutex;
-use tracing::{debug, error, info, trace};
-
-use graphcast_sdk::graphcast_agent::GraphcastAgent;
-use graphcast_sdk::graphql::{
-    client_network::query_network_subgraph, client_registry::query_registry_indexer,
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex as SyncMutex,
 };
-use graphcast_sdk::{build_wallet, graphcast_id_address, BlockPointer};
+use std::thread::sleep;
+use tokio::{
+    sync::Mutex as AsyncMutex,
+    time::{interval, timeout, Duration},
+};
+use tracing::{debug, error, info, trace, warn};
 
-use poi_radio::config::Config;
-use poi_radio::metrics::handle_serve_metrics;
-use poi_radio::operation::gossip_poi;
-use poi_radio::server::run_server;
+use graphcast_sdk::{
+    build_wallet,
+    graphcast_agent::GraphcastAgent,
+    graphcast_id_address,
+    graphql::{
+        client_graph_node::update_chainhead_blocks, client_network::query_network_subgraph,
+        client_registry::query_registry_indexer,
+    },
+    networks::NetworkName,
+    BlockPointer,
+};
+
 use poi_radio::{
-    attestation::LocalAttestationsMap, chainhead_block_str, generate_topics, radio_msg_handler,
-    GRAPHCAST_AGENT, MESSAGES,
+    attestation::LocalAttestationsMap, chainhead_block_str, config::Config, generate_topics,
+    metrics::handle_serve_metrics, operation::gossip_poi, radio_msg_handler, server::run_server,
+    CONFIG, GRAPHCAST_AGENT, MESSAGES, RADIO_NAME,
 };
-use poi_radio::{CONFIG, RADIO_NAME};
 
 #[macro_use]
 extern crate partial_application;
@@ -90,6 +93,11 @@ async fn main() {
     let topic_static = &radio_config.topics.clone();
     let generate_topics = partial!(generate_topics => topic_coverage.clone(), topic_network.clone(), my_address.clone(), topic_graph_node.clone(), topic_static);
     let topics = generate_topics().await;
+    GRAPHCAST_AGENT
+        .get()
+        .unwrap()
+        .update_content_topics(topics.clone())
+        .await;
 
     info!("Found content topics for subscription: {:?}", topics);
     _ = MESSAGES.set(Arc::new(SyncMutex::new(vec![])));
@@ -102,75 +110,122 @@ async fn main() {
     let local_attestations: Arc<AsyncMutex<LocalAttestationsMap>> =
         Arc::new(AsyncMutex::new(HashMap::new()));
 
-    _ = CONFIG.set(Arc::new(SyncMutex::new(radio_config)));
     let running = Arc::new(AtomicBool::new(true));
+    let skip_iteration = Arc::new(AtomicBool::new(false));
+    let skip_iteration_clone = skip_iteration.clone();
+
+    _ = CONFIG.set(Arc::new(SyncMutex::new(radio_config)));
     if CONFIG.get().unwrap().lock().unwrap().server_port.is_some() {
         tokio::spawn(run_server(running.clone(), Arc::clone(&local_attestations)));
     }
 
+    // Can later expose to radio config for the users
+    let mut topic_update_interval = interval(Duration::from_secs(600));
+    let mut gossip_poi_interval = interval(Duration::from_secs(30));
+
+    let iteration_timeout = Duration::from_secs(180);
+    let update_timeout = Duration::from_secs(15);
+    let gossip_timeout = Duration::from_secs(150);
+
+    // Skip a main loop iteration when hit timeout
+    tokio::spawn(async move {
+        tokio::time::sleep(iteration_timeout).await;
+        skip_iteration_clone.store(true, Ordering::SeqCst);
+    });
+
     // Main loop for sending messages, can factor out
     // and take radio specific query and parsing for radioPayload
     while running.load(Ordering::SeqCst) {
-        let network_chainhead_blocks: Arc<AsyncMutex<HashMap<NetworkName, BlockPointer>>> =
-            Arc::new(AsyncMutex::new(HashMap::new()));
-        let local_attestations = Arc::clone(&local_attestations);
-        // Update topic subscription
-        if Utc::now().timestamp() % 120 == 0 {
-            GRAPHCAST_AGENT
-                .get()
-                .unwrap()
-                .update_content_topics(generate_topics().await)
-                .await;
-        }
-        // Update all the chainheads of the network
-        // Also get a hash map returned on the subgraph mapped to network name and latest block
-        let graph_node = CONFIG
-            .get()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .graph_node_endpoint
-            .clone();
-        let subgraph_network_latest_blocks =
-            match update_chainhead_blocks(graph_node, &mut *network_chainhead_blocks.lock().await)
-                .await
-            {
-                Ok(res) => res,
-                Err(e) => {
-                    error!("Could not query indexing statuses, pull again later: {e}");
+        // Run event intervals sequentially by satisfication of other intervals and corresponding tick
+        tokio::select! {
+            _ = topic_update_interval.tick() => {
+                if skip_iteration.load(Ordering::SeqCst) {
+                    skip_iteration.store(false, Ordering::SeqCst);
                     continue;
                 }
-            };
+                // Update topic subscription
+                let result = timeout(update_timeout,
+                    GRAPHCAST_AGENT
+                    .get()
+                    .unwrap()
+                    .update_content_topics(generate_topics().await)
+                ).await;
 
-        trace!(
-            "Subgraph network and latest blocks: {:#?}",
-            subgraph_network_latest_blocks,
-        );
+                if result.is_err() {
+                    warn!("update_content_topics timed out");
+                } else {
+                    debug!("update_content_topics completed");
+                }
+            },
+            _ = gossip_poi_interval.tick() => {
+                if skip_iteration.load(Ordering::SeqCst) {
+                    skip_iteration.store(false, Ordering::SeqCst);
+                    continue;
+                }
 
-        // Radio specific message content query function
-        // Function takes in an identifier string and make specific queries regarding the identifier
-        // The example here combines a single function provided query endpoint, current block info based on the subgraph's indexing network
-        // Then the function gets sent to agent for making identifier independent queries
-        let identifiers = GRAPHCAST_AGENT.get().unwrap().content_identifiers().await;
-        let num_topics = identifiers.len();
-        let blocks_str = chainhead_block_str(&*network_chainhead_blocks.lock().await);
-        info!(
-            "Network statuses:\n{}: {:#?}\n{}: {:#?}\n{}: {}",
-            "Chainhead blocks",
-            blocks_str.clone(),
-            "Number of gossip peers",
-            GRAPHCAST_AGENT.get().unwrap().number_of_peers(),
-            "Number of tracked deployments (topics)",
-            num_topics,
-        );
+                let result = timeout(gossip_timeout, {
+                    let network_chainhead_blocks: Arc<AsyncMutex<HashMap<NetworkName, BlockPointer>>> =
+                        Arc::new(AsyncMutex::new(HashMap::new()));
+                    let local_attestations = Arc::clone(&local_attestations);
 
-        gossip_poi(
-            identifiers,
-            &network_chainhead_blocks,
-            &subgraph_network_latest_blocks,
-            local_attestations,
-        )
-        .await;
+                    // Update all the chainheads of the network
+                    // Also get a hash map returned on the subgraph mapped to network name and latest block
+                    let graph_node = CONFIG
+                        .get()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .graph_node_endpoint
+                        .clone();
+                    let subgraph_network_latest_blocks =
+                        match update_chainhead_blocks(graph_node, &mut *network_chainhead_blocks.lock().await)
+                            .await
+                        {
+                            Ok(res) => res,
+                            Err(e) => {
+                                error!("Could not query indexing statuses, pull again later: {e}");
+                                continue;
+                            }
+                        };
+
+                    trace!(
+                        "Subgraph network and latest blocks: {:#?}",
+                        subgraph_network_latest_blocks,
+                    );
+
+                    // Radio specific message content query function
+                    // Function takes in an identifier string and make specific queries regarding the identifier
+                    // The example here combines a single function provided query endpoint, current block info based on the subgraph's indexing network
+                    // Then the function gets sent to agent for making identifier independent queries
+                    let identifiers = GRAPHCAST_AGENT.get().unwrap().content_identifiers().await;
+                    let num_topics = identifiers.len();
+                    let blocks_str = chainhead_block_str(&*network_chainhead_blocks.lock().await);
+                    info!(
+                        "Network statuses:\n{}: {:#?}\n{}: {:#?}\n{}: {}",
+                        "Chainhead blocks",
+                        blocks_str.clone(),
+                        "Number of gossip peers",
+                        GRAPHCAST_AGENT.get().unwrap().number_of_peers(),
+                        "Number of tracked deployments (topics)",
+                        num_topics,
+                    );
+
+                    gossip_poi(
+                        identifiers,
+                        &network_chainhead_blocks.clone(),
+                        &subgraph_network_latest_blocks.clone(),
+                        local_attestations,
+                    )
+                }).await;
+
+                if result.is_err() {
+                    warn!("gossip_poi timed out");
+                } else {
+                    debug!("gossip_poi completed");
+                }
+            },
+            else => break,
+        }
 
         sleep(Duration::from_secs(5));
         continue;
