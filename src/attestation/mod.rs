@@ -116,6 +116,7 @@ pub async fn process_messages(
     messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
     registry_subgraph: &str,
     network_subgraph: &str,
+    #[allow(unused)] runtime_config_indexer_stake: Option<f32>,
 ) -> Result<RemoteAttestationsMap, AttestationError> {
     let mut remote_attestations: RemoteAttestationsMap = HashMap::new();
 
@@ -167,6 +168,40 @@ pub async fn process_messages(
                 vec![msg.nonce],
             ));
         }
+
+        #[cfg(test)]
+        {
+            use crate::integration_tests::{
+                setup::constants::{
+                    MOCK_SUBGRAPH_GOERLI, MOCK_SUBGRAPH_GOERLI_2, MOCK_SUBGRAPH_MAINNET,
+                },
+                utils::tests::{
+                    generate_deterministic_address, round_to_nearest, setup_mock_server,
+                },
+            };
+
+            use std::{env, thread::sleep, time::Duration};
+
+            let graphcast_id = generate_deterministic_address(&sender);
+            env::set_var("MOCK_SENDER", graphcast_id.clone());
+            let indexer_address = generate_deterministic_address(&graphcast_id);
+
+            setup_mock_server(
+                round_to_nearest(Utc::now().timestamp()).try_into().unwrap(),
+                &indexer_address,
+                &graphcast_id,
+                &[
+                    MOCK_SUBGRAPH_MAINNET.to_string(),
+                    MOCK_SUBGRAPH_GOERLI.to_string(),
+                    MOCK_SUBGRAPH_GOERLI_2.to_string(),
+                ],
+                runtime_config_indexer_stake.unwrap(),
+                &"0x25331f98b82ca7f3966256bf508a7ede52e715b631dfa3d73b846bb7617f6b9e".to_string(),
+            )
+            .await;
+
+            sleep(Duration::from_secs(1));
+        }
     }
 
     // update once at the end
@@ -210,20 +245,31 @@ pub async fn local_comparison_point(
     collect_window_duration: i64,
 ) -> Option<(u64, i64)> {
     let local_attestations = local_attestations.lock().await;
+    debug!(
+        "Local attestations for deployment ID {}: {:?}",
+        id, local_attestations
+    );
     if let Some(blocks_map) = local_attestations.get(&id) {
-        // Find the attestaion by the smallest block
-        blocks_map
-            .iter()
-            .min_by_key(|(&min_block, attestation)| {
-                // unwrap is okay because we add timestamp at local creation of attestation
-                (min_block, *attestation.timestamp.first().unwrap())
-            })
-            .map(|(&block, a)| {
-                (
-                    block,
-                    *a.timestamp.first().unwrap() + collect_window_duration,
-                )
-            })
+        // Find the attestation by the smallest block
+        let min_attestation = blocks_map.iter().min_by_key(|(&min_block, attestation)| {
+            // unwrap is okay because we add timestamp at local creation of attestation
+            (min_block, *attestation.timestamp.first().unwrap())
+        });
+
+        debug!(
+            "Minimum attestation for deployment ID {}: {:?}",
+            id, min_attestation
+        );
+
+        let result = min_attestation.map(|(&block, a)| {
+            (
+                block,
+                *a.timestamp.first().unwrap() + collect_window_duration,
+            )
+        });
+
+        debug!("Comparison point for deployment ID {}: {:?}", id, result);
+        result
     } else {
         None
     }

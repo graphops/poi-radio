@@ -52,12 +52,8 @@ opentelemetry-jaeger = { version = "0.17.0", features = ["rt-tokio"] }
 tracing-opentelemetry = "0.18.0"
 clap = { version = "3.2.23", features = ["derive", "env"] }
 
-[[bin]]
-name = "integration-tests"
-path = "integration-tests/src/main.rs"
-
 [dev-dependencies]
-criterion = {version = "0.4", features = [ "async", "async_futures" ]}
+criterion = { version = "0.4", features = ["async", "async_futures"] }
 rand = "0.8"
 
 [[bench]]

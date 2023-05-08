@@ -116,7 +116,7 @@ impl QueryRoot {
             .network_subgraph
             .clone();
         let remote_attestations_result =
-            process_messages(filter_msg, &registry_subgraph, &network_subgraph).await;
+            process_messages(filter_msg, &registry_subgraph, &network_subgraph, None).await;
         let remote_attestations = match remote_attestations_result {
             Ok(remote) => {
                 debug!(
