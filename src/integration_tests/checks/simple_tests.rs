@@ -27,8 +27,6 @@ pub mod tests {
     static TEST_ATTESTATION_HANDLER_CALLED: AtomicBool = AtomicBool::new(false);
 
     fn post_comparison_handler(messages: MessagesVec, block: u64, subgraph: &str) {
-        panic!("inside post comparison handler capsule");
-
         if POST_COMPARISON_HANDLER_CALLED.load(Ordering::SeqCst) {
             info!("Post comparison handler already called, returning early.");
             return;
@@ -62,8 +60,6 @@ pub mod tests {
         remote: &RemoteAttestationsMap,
         local: &LocalAttestationsMap,
     ) {
-        panic!("inside test attestation capsule");
-
         if TEST_ATTESTATION_HANDLER_CALLED.load(Ordering::SeqCst) {
             return;
         }
@@ -104,8 +100,6 @@ pub mod tests {
     static RAN_FIRST: AtomicBool = AtomicBool::new(false);
 
     fn success_handler(start_time: Instant, messages: MessagesVec, graphcast_id: &str) {
-        panic!("inside success handler capsule");
-
         if SUCCESS_HANDLER_CALLED.load(Ordering::SeqCst) {
             return;
         }

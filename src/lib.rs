@@ -170,9 +170,9 @@ pub async fn run_radio_impl<S, A, P>(
         let runtime_config = runtime_config.clone().unwrap();
 
         let collect_message_duration: i64 = env::var("COLLECT_MESSAGE_DURATION")
-            .unwrap_or("60".to_string())
+            .unwrap_or("120".to_string())
             .parse::<i64>()
-            .unwrap_or(60);
+            .unwrap_or(120);
 
         let private_key = generate_random_private_key();
         env::set_var("PRIVATE_KEY", private_key.display_secret().to_string());

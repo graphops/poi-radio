@@ -6,10 +6,12 @@ pub mod tests {
 
     use crate::{
         attestation::{LocalAttestationsMap, RemoteAttestationsMap},
-        integration_tests::{setup::test_radio::tests::run_test_radio, utils::RadioTestConfig},
+        integration_tests::utils::RadioTestConfig,
         MessagesVec, MESSAGES,
     };
     use tracing::{error, info};
+
+    use crate::run_test_radio;
 
     fn post_comparison_handler(_messages: MessagesVec, _block: u64, _subgraph: &str) {}
 
@@ -24,7 +26,7 @@ pub mod tests {
 
     #[tokio::test]
     pub async fn test_invalid_sender_check() {
-        let mut config = RadioTestConfig::new();
+        let mut config = RadioTestConfig::default_config();
         config.indexer_stake = 1.00;
 
         let run_test_radio_future = run_test_radio(

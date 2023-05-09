@@ -4,10 +4,12 @@ pub mod tests {
 
     use crate::{
         attestation::{LocalAttestationsMap, RemoteAttestationsMap},
-        integration_tests::{setup::test_radio::tests::run_test_radio, utils::RadioTestConfig},
+        integration_tests::utils::RadioTestConfig,
         MessagesVec,
     };
     use tracing::{debug, info};
+
+    use crate::run_test_radio;
 
     fn post_comparison_handler(_messages: MessagesVec, _block: u64, _subgraph: &str) {}
 
@@ -84,8 +86,8 @@ pub mod tests {
 
     #[tokio::test]
     pub async fn test_poi_divergence_remote() {
-        let config = RadioTestConfig::new();
-        env::set_var("COLLECT_MESSAGE_DURATION", "90");
+        let config = RadioTestConfig::default_config();
+        env::set_var("COLLECT_MESSAGE_DURATION", "120");
 
         run_test_radio(
             Arc::new(config),

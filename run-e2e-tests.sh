@@ -1,36 +1,34 @@
 #!/bin/bash
 
-if [ -f .env ]; then
-    # Read environment variables from .env file
-    source .env
-else
-    # Export environment variables
-    export GRAPH_NODE_STATUS_ENDPOINT=$GRAPH_NODE_STATUS_ENDPOINT
-    export REGISTRY_SUBGRAPH=$REGISTRY_SUBGRAPH
-    export NETWORK_SUBGRAPH=$NETWORK_SUBGRAPH
-    export GRAPHCAST_NETWORK=$GRAPHCAST_NETWORK
-    export RUST_LOG=$RUST_LOG
-    export PRIVATE_KEY=$PRIVATE_KEY
-fi
+# Function to kill child processes when SIGINT is received
+function clean_up {
+    echo "Cleaning up child processes..."
+    kill $(jobs -p) 2>/dev/null
+    [ -n "$basic_instance_pid_1" ] && kill "$basic_instance_pid_1" 2>/dev/null
+    [ -n "$basic_instance_pid_2" ] && kill "$basic_instance_pid_2" 2>/dev/null
+    [ -n "$invalid_payload_pid" ] && kill "$invalid_payload_pid" 2>/dev/null
+    [ -n "$invalid_nonce_pid" ] && kill "$invalid_nonce_pid" 2>/dev/null
+    [ -n "$invalid_block_hash_pid" ] && kill "$invalid_block_hash_pid" 2>/dev/null
+    [ -n "$divergent_instance_pid_1" ] && kill "$divergent_instance_pid_1" 2>/dev/null
+    [ -n "$divergent_instance_pid_2" ] && kill "$divergent_instance_pid_2" 2>/dev/null
+    echo "Exiting..."
+    exit
+}
+
+# Trap SIGINT signal (Ctrl+C) and call clean_up function
+trap clean_up SIGINT
 
 # Create logs directory if it doesn't exist
 mkdir -p logs
-
-# Define variables
-compose_file="e2e-tests.docker-compose.yml"
-num_basic_containers=5
 
 # Variables for summary report
 num_total_tests=0
 num_success_tests=0
 num_fail_tests=0
-num_timeout_tests=0
 names_of_failed_tests=()
 
-# Function to stop containers and print summary report
-stop_containers() {
-    echo "Stopping containers..."
-    docker-compose -f $compose_file down
+# Function to print summary report
+print_summary_report() {
     end_time=$SECONDS
     duration=$((end_time - start_time))
     duration_minutes=$((duration / 60))
@@ -42,13 +40,12 @@ stop_containers() {
 Total Tests Run: $num_total_tests
 Successful Tests: $num_success_tests
 Failed Tests: $num_fail_tests
-Timed Out Tests: $num_timeout_tests
 Test Suite Duration: ${duration_minutes}m ${duration_seconds}s
 -------------------------------------
 "
 
-    if [ "$num_fail_tests" -gt 0 ] || [ "$num_timeout_tests" -gt 0 ]; then
-        echo "The following tests failed or timed out:"
+    if [ "$num_fail_tests" -gt 0 ]; then
+        echo "The following tests failed:"
         printf '%s\n' "${names_of_failed_tests[@]}"
         dump_failed_tests_logs
         exit 1
@@ -57,32 +54,52 @@ Test Suite Duration: ${duration_minutes}m ${duration_seconds}s
     exit 0
 }
 
-# Function to run tests with timeout
-run_test_with_timeout() {
+run_test() {
     local test_name=$1
-    local timeout_value=$2
+    local test_path=$2
+    local test_env=$3
     echo "Running test: $test_name"
     num_total_tests=$((num_total_tests + 1))
-    export CHECK=$test_name
-    timeout_output=$(timeout $timeout_value sh -c 'cargo run --bin integration-tests --' 2>&1)
-    timeout_exit_code=$?
-    cargo_exit_code=$?
-    echo "$timeout_output" | tee "logs/${test_name}_logs.log"
-    if [ $cargo_exit_code -eq 0 ]; then
-        echo "$test_name - ✓"
-        num_success_tests=$((num_success_tests + 1))
-        rm "logs/${test_name}_logs.log"
-    elif [[ " ${validation_tests[@]} " =~ " ${test_name} " ]]; then
-        echo "$test_name - timeout (but considered successful)"
-        num_success_tests=$((num_success_tests + 1))
-    elif [ $timeout_exit_code -eq 124 ]; then
-        echo "$test_name - timeout"
-        num_timeout_tests=$((num_timeout_tests + 1))
-        names_of_failed_tests+=("$test_name")
+
+    if [ "$test_name" == "run_basic_instance" ]; then
+        for i in {1..2}; do
+            if [ "$(uname)" == "Darwin" ]; then
+                sudo ifconfig lo0 alias 127.0.0.2 up
+                (RUST_BACKTRACE=1 RUST_LOG="off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace" cargo test --lib -- $test_path "$test_env" >"logs/${test_name}_${i}_logs.log" 2>&1) &
+                if [ "$i" -eq 1 ]; then
+                    basic_instance_pid_1=$!
+                else
+                    basic_instance_pid_2=$!
+                fi
+            else
+                sudo ip netns add basic_instance_${i}
+                sudo ip netns exec basic_instance_${i} bash -c "(RUST_BACKTRACE=1 RUST_LOG=\"off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace\" cargo test --lib -- $test_path \"$test_env\" > \"logs/${test_name}_${i}_logs.log\" 2>&1) &"
+                if [ "$i" -eq 1 ]; then
+                    basic_instance_pid_1=$!
+                else
+                    basic_instance_pid_2=$!
+                fi
+            fi
+        done
+    elif [ "$test_name" == "setup_invalid_payload_instance" ]; then
+        (RUST_BACKTRACE=1 RUST_LOG="off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace" cargo test --lib -- $test_path "$test_env" >"logs/${test_name}_logs.log" 2>&1) &
+        invalid_payload_pid=$!
+    elif [ "$test_name" == "setup_invalid_nonce_instance" ]; then
+        (RUST_BACKTRACE=1 RUST_LOG="off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace" cargo test --lib -- $test_path "$test_env" >"logs/${test_name}_logs.log" 2>&1) &
+        invalid_nonce_pid=$!
+    elif [ "$test_name" == "setup_invalid_block_hash_instance" ]; then
+        (RUST_BACKTRACE=1 RUST_LOG="off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace" cargo test --lib -- $test_path "$test_env" >"logs/${test_name}_logs.log" 2>&1) &
+        invalid_block_hash_pid=$!
     else
-        echo "$test_name - ✗"
-        num_fail_tests=$((num_fail_tests + 1))
-        names_of_failed_tests+=("$test_name")
+        RUST_BACKTRACE=1 RUST_LOG="off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace" cargo test --lib -- $test_path "$test_env" >"logs/${test_name}_logs.log" 2>&1
+        if [ $? -eq 0 ]; then
+            echo "$test_name - ✓"
+            num_success_tests=$((num_success_tests + 1))
+        else
+            echo "$test_name - ✗"
+            num_fail_tests=$((num_fail_tests + 1))
+            names_of_failed_tests+=("$test_name")
+        fi
     fi
 }
 
@@ -94,56 +111,31 @@ dump_failed_tests_logs() {
         echo "===== $test_name =====" >>logs/failed_tests_logs.log
         cat "logs/${test_name}_logs.log" >>logs/failed_tests_logs.log
         echo -e "\n\n" >>logs/failed_tests_logs.log
-        rm "logs/${test_name}_logs.log"
     done
 }
 
-# Start containers
+# Start time
 start_time=$SECONDS
-echo "Starting containers..."
-docker-compose -f $compose_file up -d --scale basic-instance=$num_basic_containers
-docker-compose -f $compose_file up -d invalid-block-hash-instance invalid-payload-instance invalid-nonce-instance
 
-# Wait for containers to start
-echo "Waiting for containers to start..."
-until [ $(docker-compose -f $compose_file ps -q basic-instance | wc -l) -eq $num_basic_containers ]; do
-    sleep 1
-done
+run_test "run_basic_instance" "integration_tests::setup::basic::tests::run_basic_instance" "RUST_LOG=trace"
+# run_test "setup_invalid_payload_instance" "integration_tests::setup::invalid_payload::tests::run_invalid_payload_instance" "RUST_LOG=trace"
+# run_test "setup_invalid_nonce_instance" "integration_tests::setup::invalid_nonce::tests::run_invalid_nonce_instance" "RUST_LOG=trace"
+# run_test "setup_invalid_block_hash_instance" "integration_tests::setup::invalid_block_hash::tests::run_invalid_block_hash_instance" "RUST_LOG=trace"
+run_test "simple_tests" "integration_tests::checks::simple_tests::tests::run_simple_tests" "RUST_LOG=trace"
+run_test "invalid_messages" "integration_tests::checks::invalid_messages::tests::test_invalid_messages" "RUST_LOG=trace"
+run_test "invalid_sender" "integration_tests::checks::invalid_sender::tests::test_invalid_sender_check" "RUST_LOG=trace"
 
-# Wait 10 seconds for containers to settle
-echo "Waiting for containers to settle..."
-sleep 15
+# Spin up 2 more divergent instances before running poi_divergence_local test
+run_test "setup_divergent_instance_1" "integration_tests::setup::divergent::tests::run_divergent_instance" "RUST_LOG=trace"
+divergent_instance_pid_1=$!
 
-# Run simple_tests
-run_test_with_timeout "simple_tests" "15m"
+run_test "poi_divergence_remote" "integration_tests::checks::poi_divergence_remote::tests::test_poi_divergence_remote" "RUST_LOG=trace"
 
-# Run invalid_sender test
-run_test_with_timeout "invalid_sender" "5m"
+run_test "setup_divergent_instance_2" "integration_tests::setup::divergent::tests::run_divergent_instance" "RUST_LOG=trace"
+divergent_instance_pid_2=$!
 
-# Run invalid_messages test
-run_test_with_timeout "invalid_messages" "5m"
+# Run the last test
+run_test "poi_divergence_local" "integration_tests::checks::poi_divergence_local::tests::test_poi_divergence_local" "RUST_LOG=trace"
 
-# Scale up divergent instances
-echo "Scaling containers..."
-docker-compose -f $compose_file up -d --scale divergent-instance=1 --scale basic-instance=8
-
-# Wait 1 minute for containers to settle
-echo "Waiting for containers to settle..."
-sleep 60
-
-# Run poi_divergence_remote test
-run_test_with_timeout "poi_divergence_remote" "5m"
-
-# Scale down basic instances to 1 and scale up divergent instances to 5
-echo "Scaling containers..."
-docker-compose -f $compose_file up -d --scale basic-instance=1 --scale divergent-instance=5
-
-# Wait 10 seconds for containers to settle
-echo "Waiting for containers to settle..."
-sleep 10
-
-# Run poi_divergence_local test
-run_test_with_timeout "poi_divergence_local" "5m"
-
-# Stop containers and print summary report
-stop_containers
+# Print summary report and exit
+print_summary_report

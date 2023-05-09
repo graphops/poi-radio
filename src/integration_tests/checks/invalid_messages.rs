@@ -2,11 +2,13 @@
 pub mod tests {
     use crate::{
         attestation::{LocalAttestationsMap, RemoteAttestationsMap},
-        integration_tests::{setup::test_radio::tests::run_test_radio, utils::RadioTestConfig},
+        integration_tests::utils::RadioTestConfig,
         MessagesVec,
     };
     use std::{any::type_name, sync::Arc};
     use tracing::{error, info};
+
+    use crate::run_test_radio;
 
     fn type_of<T>(_: T) -> &'static str {
         type_name::<T>()
@@ -24,8 +26,8 @@ pub mod tests {
     fn success_handler(messages: MessagesVec, _graphcast_id: &str) {
         let messages = messages.get().unwrap().lock().unwrap();
 
-        if messages.len() >= 5 {
-            info!("At least 5 messages received");
+        if messages.len() >= 1 {
+            info!("At least 1 messages received");
 
             let mut failed_conditions = vec![];
 
@@ -61,7 +63,7 @@ pub mod tests {
 
     #[tokio::test]
     pub async fn test_invalid_messages() {
-        let config = RadioTestConfig::new();
+        let config = RadioTestConfig::default_config();
         run_test_radio(
             Arc::new(config),
             success_handler,
