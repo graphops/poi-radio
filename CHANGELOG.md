@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - Remove api metrics path
 - Return empty vec if indexer_allocations function fails
 - Radio name defined in main
+- Disable unsubscribe and use timeout
 
 ### Documentation
 
@@ -69,7 +70,7 @@ All notable changes to this project will be documented in this file.
 - Rollback version number
 - Tweak crates badge
 - Release v0.1.1
-- Release v0.1.2
+- Release v0.1.3
 
 ### Refactor
 
