@@ -250,7 +250,7 @@ pub async fn run_radio_impl<S, A, P>(
             registry_subgraph.clone(),
             network_subgraph.clone(),
             graph_node_endpoint.clone(),
-            None,
+            Some(vec!["/ip4/164.90.179.254/tcp/31900/p2p/16Uiu2HAmMRbNuL3rJ2Tq8NBdW8p3tTtD3DGAvyEj49Mrfzd46KcR".to_string()]),
             Some("testnet".to_owned()),
             runtime_config.subgraphs.clone(),
             None,
