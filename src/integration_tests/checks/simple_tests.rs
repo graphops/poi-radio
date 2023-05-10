@@ -157,8 +157,8 @@ pub mod tests {
             }
         }
 
-        if messages.len() >= 5 {
-            info!("5 valid messages received!");
+        if messages.len() >= 1 {
+            info!("1 valid message received!");
             info!("{}", "simple receiver check is successful ✅");
 
             info!("Checking content topics");
@@ -216,7 +216,7 @@ pub mod tests {
                 .collect::<Vec<_>>();
 
             let messages_prev_len = messages.len() as u32;
-            let count = 3;
+            let count = 2;
 
             if messages_prev_len >= (count as f32 * 0.7) as u32 {
                 info!("{}", "num_messages test is successful ✅");

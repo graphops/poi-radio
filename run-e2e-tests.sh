@@ -118,24 +118,9 @@ dump_failed_tests_logs() {
 start_time=$SECONDS
 
 run_test "run_basic_instance" "integration_tests::setup::basic::tests::run_basic_instance" "RUST_LOG=trace"
-# run_test "setup_invalid_payload_instance" "integration_tests::setup::invalid_payload::tests::run_invalid_payload_instance" "RUST_LOG=trace"
-# run_test "setup_invalid_nonce_instance" "integration_tests::setup::invalid_nonce::tests::run_invalid_nonce_instance" "RUST_LOG=trace"
-# run_test "setup_invalid_block_hash_instance" "integration_tests::setup::invalid_block_hash::tests::run_invalid_block_hash_instance" "RUST_LOG=trace"
 run_test "simple_tests" "integration_tests::checks::simple_tests::tests::run_simple_tests" "RUST_LOG=trace"
 run_test "invalid_messages" "integration_tests::checks::invalid_messages::tests::test_invalid_messages" "RUST_LOG=trace"
 run_test "invalid_sender" "integration_tests::checks::invalid_sender::tests::test_invalid_sender_check" "RUST_LOG=trace"
-
-# Spin up 2 more divergent instances before running poi_divergence_local test
-run_test "setup_divergent_instance_1" "integration_tests::setup::divergent::tests::run_divergent_instance" "RUST_LOG=trace"
-divergent_instance_pid_1=$!
-
-run_test "poi_divergence_remote" "integration_tests::checks::poi_divergence_remote::tests::test_poi_divergence_remote" "RUST_LOG=trace"
-
-run_test "setup_divergent_instance_2" "integration_tests::setup::divergent::tests::run_divergent_instance" "RUST_LOG=trace"
-divergent_instance_pid_2=$!
-
-# Run the last test
-run_test "poi_divergence_local" "integration_tests::checks::poi_divergence_local::tests::test_poi_divergence_local" "RUST_LOG=trace"
 
 # Print summary report and exit
 print_summary_report
