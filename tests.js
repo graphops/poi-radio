@@ -68,7 +68,7 @@ async function runTest(testName, testPath, testEnv) {
 
   // If it's a basic_instance test, run it in a Docker container
   if (testName.startsWith("run_basic_instance")) {
-    testCommand = `docker build -t test_image . && docker run -e TEST_TO_RUN=${testPath} test_image`;
+    testCommand = `docker build -f e2e-tests.Dockerfile -t test_image . && docker run -e TEST_TO_RUN=${testPath} test_image`;
   }
 
   return new Promise((resolve, reject) => {

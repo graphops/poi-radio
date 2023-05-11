@@ -118,9 +118,69 @@ dump_failed_tests_logs() {
 start_time=$SECONDS
 
 run_test "run_basic_instance" "integration_tests::setup::basic::tests::run_basic_instance" "RUST_LOG=trace"
+# run_test "setup_invalid_payload_instance" "integration_tests::setup::invalid_payload::tests::run_invalid_payload_instance" "RUST_LOG=trace"
+# if [ "$(uname)" == "Darwin" ]; then
+#     sudo ifconfig lo0 alias 127.0.0.3 up
+#     (RUST_BACKTRACE=1 RUST_LOG="off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace" cargo test --lib -- "integration_tests::setup::invalid_payload::tests::run_invalid_payload_instance" "RUST_LOG=trace" >"logs/setup_invalid_payload_instance_logs.log" 2>&1) &
+#     invalid_payload_pid=$!
+# else
+#     sudo ip netns add invalid_payload_instance
+#     sudo ip netns exec invalid_payload_instance bash -c "(RUST_BACKTRACE=1 RUST_LOG=\"off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace\" cargo test --lib -- \"integration_tests::setup::invalid_payload::tests::run_invalid_payload_instance\" \"RUST_LOG=trace\" > \"logs/setup_invalid_payload_instance_logs.log\" 2>&1) &"
+#     invalid_payload_pid=$!
+# fi
+
+# run_test "setup_invalid_nonce_instance" "integration_tests::setup::invalid_nonce::tests::run_invalid_nonce_instance" "RUST_LOG=trace"
+# if [ "$(uname)" == "Darwin" ]; then
+#     sudo ifconfig lo0 alias 127.0.0.4 up
+#     (RUST_BACKTRACE=1 RUST_LOG="off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace" cargo test --lib -- "integration_tests::setup::invalid_nonce::tests::run_invalid_nonce_instance" "RUST_LOG=trace" >"logs/setup_invalid_nonce_instance_logs.log" 2>&1) &
+#     invalid_nonce_pid=$!
+# else
+#     sudo ip netns add invalid_nonce_instance
+#     sudo ip netns exec invalid_nonce_instance bash -c "(RUST_BACKTRACE=1 RUST_LOG=\"off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace\" cargo test --lib -- \"integration_tests::setup::invalid_nonce::tests::run_invalid_nonce_instance\" \"RUST_LOG=trace\" > \"logs/setup_invalid_nonce_instance_logs.log\" 2>&1) &"
+#     invalid_nonce_pid=$!
+# fi
+
+# run_test "setup_invalid_block_hash_instance" "integration_tests::setup::invalid_block_hash::tests::run_invalid_block_hash_instance" "RUST_LOG=trace"
+# if [ "$(uname)" == "Darwin" ]; then
+#     sudo ifconfig lo0 alias 127.0.0.5 up
+#     (RUST_BACKTRACE=1 RUST_LOG="off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace" cargo test --lib -- "integration_tests::setup::invalid_block_hash::tests::run_invalid_block_hash_instance" "RUST_LOG=trace" >"logs/setup_invalid_block_hash_instance_logs.log" 2>&1) &
+#     invalid_block_hash_pid=$!
+# else
+#     sudo ip netns add invalid_block_hash_instance
+#     sudo ip netns exec invalid_block_hash_instance bash -c "(RUST_BACKTRACE=1 RUST_LOG=\"off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace\" cargo test --lib -- \"integration_tests::setup::invalid_block_hash::tests::run_invalid_block_hash_instance\" \"RUST_LOG=trace\" > \"logs/setup_invalid_block_hash_instance_logs.log\" 2>&1) &"
+#     invalid_block_hash_pid=$!
+# fi
+
 run_test "simple_tests" "integration_tests::checks::simple_tests::tests::run_simple_tests" "RUST_LOG=trace"
 run_test "invalid_messages" "integration_tests::checks::invalid_messages::tests::test_invalid_messages" "RUST_LOG=trace"
 run_test "invalid_sender" "integration_tests::checks::invalid_sender::tests::test_invalid_sender_check" "RUST_LOG=trace"
+
+# # run first divergent instance
+# if [ "$(uname)" == "Darwin" ]; then
+#     sudo ifconfig lo0 alias 127.0.0.2 up
+#     (RUST_BACKTRACE=1 RUST_LOG="off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace" cargo test --lib -- "integration_tests::setup::divergent::tests::run_divergent_instance" "RUST_LOG=trace" >"logs/setup_divergent_instance_1_logs.log" 2>&1) &
+#     divergent_instance_pid_1=$!
+# else
+#     sudo ip netns add divergent_instance_1
+#     sudo ip netns exec divergent_instance_1 bash -c "(RUST_BACKTRACE=1 RUST_LOG=\"off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace\" cargo test --lib -- \"integration_tests::setup::divergent::tests::run_divergent_instance\" \"RUST_LOG=trace\" > \"logs/setup_divergent_instance_1_logs.log\" 2>&1) &"
+#     divergent_instance_pid_1=$!
+# fi
+
+# run_test "poi_divergence_remote" "integration_tests::checks::poi_divergence_remote::tests::test_poi_divergence_remote" "RUST_LOG=trace"
+
+# # run second divergent instance
+# if [ "$(uname)" == "Darwin" ]; then
+#     sudo ifconfig lo0 alias 127.0.0.3 up
+#     (RUST_BACKTRACE=1 RUST_LOG="off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace" cargo test --lib -- "integration_tests::setup::divergent::tests::run_divergent_instance" "RUST_LOG=trace" >"logs/setup_divergent_instance_2_logs.log" 2>&1) &
+#     divergent_instance_pid_2=$!
+# else
+#     sudo ip netns add divergent_instance_2
+#     sudo ip netns exec divergent_instance_2 bash -c "(RUST_BACKTRACE=1 RUST_LOG=\"off,hyper=off,graphcast_sdk=debug,poi_radio=trace,integration_tests=trace\" cargo test --lib -- \"integration_tests::setup::divergent::tests::run_divergent_instance\" \"RUST_LOG=trace\" > \"logs/setup_divergent_instance_2_logs.log\" 2>&1) &"
+#     divergent_instance_pid_2=$!
+# fi
+
+# Run the last test
+# run_test "poi_divergence_local" "integration_tests::checks::poi_divergence_local::tests::test_poi_divergence_local" "RUST_LOG=trace"
 
 # Print summary report and exit
 print_summary_report
