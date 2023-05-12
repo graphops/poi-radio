@@ -574,24 +574,12 @@ fn hash_addresses(addresses: &[String]) -> String {
 
 /// This function logs the operational summary of the main event loop
 #[allow(clippy::too_many_arguments)]
-pub async fn log_summary(
+pub async fn log_gossip_summary(
     blocks_str: String,
     num_topics: usize,
     messages_sent: Vec<Result<String, OperationError>>,
-    result_strings: Vec<Result<ComparisonResult, OperationError>>,
-    radio_name: &str,
 ) {
-    let slack_token = CONFIG.get().unwrap().lock().unwrap().slack_token.clone();
-    let slack_channel = CONFIG.get().unwrap().lock().unwrap().slack_channel.clone();
-    let discord_webhook = CONFIG
-        .get()
-        .unwrap()
-        .lock()
-        .unwrap()
-        .discord_webhook
-        .clone();
-
-    // Generate send summary
+    // Generate gossip summary
     let mut send_success = vec![];
     let mut trigger_failed = vec![];
     let mut skip_repeated = vec![];
@@ -604,6 +592,41 @@ pub async fn log_summary(
             Err(e) => build_errors.push(e),
         }
     }
+
+    info!(
+        "Gossip events summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
+        "Chainhead blocks",
+        blocks_str.clone(),
+        "# of deployments tracked",
+        num_topics,
+        "# of deployment updates sent",
+        send_success.len(),
+        "# of deployments waiting for next message interval",
+        skip_repeated.len(),
+        "Deployments catching up to chainhead",
+        trigger_failed,
+        "Deployments failed to build message",
+        build_errors,
+    );
+}
+
+/// This function logs the operational summary of the main event loop
+#[allow(clippy::too_many_arguments)]
+pub async fn log_comparison_summary(
+    blocks_str: String,
+    num_topics: usize,
+    result_strings: Vec<Result<ComparisonResult, OperationError>>,
+    radio_name: &str,
+) {
+    let slack_token = CONFIG.get().unwrap().lock().unwrap().slack_token.clone();
+    let slack_channel = CONFIG.get().unwrap().lock().unwrap().slack_channel.clone();
+    let discord_webhook = CONFIG
+        .get()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .discord_webhook
+        .clone();
 
     // Generate attestation summary
     let mut match_strings = vec![];
@@ -655,19 +678,11 @@ pub async fn log_summary(
     DIVERGING_SUBGRAPHS.set(divergent_strings.len().try_into().unwrap());
 
     info!(
-        "Operation summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
+        "Comparison summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
         "Chainhead blocks",
         blocks_str.clone(),
         "# of deployments tracked",
         num_topics,
-        "# of deployment updates sent",
-        send_success.len(),
-        "# of deployments waiting for next message interval",
-        skip_repeated.len(),
-        "Deployments catching up to chainhead",
-        trigger_failed,
-        "Deployments failed to build message",
-        build_errors,
         "# of deployments actively cross-checked",
         match_strings.len() + divergent_strings.len(),
         "# of successful attestations",
@@ -702,6 +717,28 @@ impl ErrorExtensions for AttestationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    // fn setup() -> (
+    //     mock::Handle<&'static str, Option<&'static str>>,
+    //     PollingMonitor<&'static str>,
+    //     mpsc::Receiver<(&'static str, &'static str)>,
+    // ) {
+    //     let (svc, handle) = mock::pair();
+    //     let (tx, rx) = mpsc::channel(10);
+    //     let monitor = spawn_monitor(svc, tx, log::discard(), PollingMonitorMetrics::mock());
+    //     (handle, monitor, rx)
+    // }
+
+    // #[tokio::test]
+    // async fn polling_monitor_simple() {
+    //     let (mut handle, monitor, mut rx) = setup();
+
+    //     // Basic test, single file is immediately available.
+    //     monitor.monitor("req-0");
+    //     send_response(&mut handle, Some("res-0")).await;
+    //     assert_eq!(rx.recv().await, Some(("req-0", "res-0")));
+    // }
 
     #[test]
     fn test_update_blocks() {

@@ -16,7 +16,7 @@ use graphcast_sdk::{
     graphcast_agent::GraphcastAgent,
     graphcast_id_address,
     graphql::{
-        client_graph_node::update_chainhead_blocks, client_network::query_network_subgraph,
+        client_graph_node::{update_network_chainheads, get_indexing_statuses, update_chainhead_blocks}, client_network::query_network_subgraph,
         client_registry::query_registry_indexer,
     },
     networks::NetworkName,
@@ -25,7 +25,7 @@ use graphcast_sdk::{
 
 use poi_radio::{
     attestation::LocalAttestationsMap, chainhead_block_str, config::Config, generate_topics,
-    metrics::handle_serve_metrics, operation::gossip_poi, radio_msg_handler, server::run_server,
+    metrics::handle_serve_metrics, operation::{gossip_poi, compare_poi}, radio_msg_handler, server::run_server,
     CONFIG, GRAPHCAST_AGENT, MESSAGES, RADIO_NAME,
 };
 
@@ -36,6 +36,7 @@ extern crate partial_application;
 async fn main() {
     _ = RADIO_NAME.set("poi-radio");
     dotenv().ok();
+    // console_subscriber::init();
 
     // Parse basic configurations
     let radio_config = Config::args();
@@ -121,7 +122,11 @@ async fn main() {
 
     // Can later expose to radio config for the users
     let mut topic_update_interval = interval(Duration::from_secs(600));
-    let mut gossip_poi_interval = interval(Duration::from_secs(30));
+    // change back to 30 and 60
+    let mut gossip_poi_interval = interval(Duration::from_secs(3));
+    let mut comparison_interval = interval(Duration::from_secs(6));
+    // let mut gossip_poi_interval = interval(Duration::from_secs(30));
+    // let mut comparison_interval = interval(Duration::from_secs(60));
 
     let iteration_timeout = Duration::from_secs(180);
     let update_timeout = Duration::from_secs(15);
@@ -222,6 +227,65 @@ async fn main() {
                     warn!("gossip_poi timed out");
                 } else {
                     debug!("gossip_poi completed");
+                }
+            },
+            _ = comparison_interval.tick() => {
+                if skip_iteration.load(Ordering::SeqCst) {
+                    skip_iteration.store(false, Ordering::SeqCst);
+                    continue;
+                }
+
+                let result = timeout(gossip_timeout, {
+                    let mut network_chainhead_blocks: HashMap<NetworkName, BlockPointer> =
+                        HashMap::new();
+                    let local_attestations = Arc::clone(&local_attestations);
+
+                    // Update all the chainheads of the network
+                    // Also get a hash map returned on the subgraph mapped to network name and latest block
+                    let graph_node_endpoint = CONFIG
+                        .get()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .graph_node_endpoint
+                        .clone();
+                    let indexing_status = match get_indexing_statuses(graph_node_endpoint.clone()).await {
+                        Ok(res) => res,
+                        Err(e) => {
+                            error!("Could not query indexing statuses, pull again later: {e}");
+                            continue;
+                        }
+                    };
+                    let _ =
+                        update_network_chainheads(
+                            indexing_status,
+                            &mut network_chainhead_blocks,
+                        );
+                    
+                    let identifiers = GRAPHCAST_AGENT.get().unwrap().content_identifiers().await;
+                    let num_topics = identifiers.len();
+                    let blocks_str = chainhead_block_str(&network_chainhead_blocks);
+                    info!(
+                        "Network statuses:\n{}: {:#?}\n{}: {:#?}\n{}: {}",
+                        "Chainhead blocks",
+                        blocks_str.clone(),
+                        "Number of gossip peers",
+                        GRAPHCAST_AGENT.get().unwrap().number_of_peers(),
+                        "Number of tracked deployments (topics)",
+                        num_topics,
+                    );
+
+                    compare_poi(
+                        identifiers,
+                        &Arc::new(AsyncMutex::new(network_chainhead_blocks.clone())),
+                        local_attestations,
+                    )
+                }).await;
+
+                if result.is_err() {
+                    warn!("compare_poi timed out");
+                } else {
+                    debug!("compare_poi completed");
                 }
             },
             else => break,

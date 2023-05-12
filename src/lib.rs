@@ -234,6 +234,10 @@ pub async fn shutdown_signal(running_program: Arc<AtomicBool>) {
     opentelemetry::global::shutdown_tracer_provider();
 }
 
+pub struct GlobalState {
+    
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum OperationError {
     #[error("Send message trigger isn't met: {0}")]

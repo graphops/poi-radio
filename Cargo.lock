@@ -1480,15 +1480,16 @@ dependencies = [
 
 [[package]]
 name = "ecdsa"
-version = "0.16.6"
+version = "0.16.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a48e5d537b8a30c0b023116d981b16334be1485af7ca68db3a2b7024cbc957fd"
+checksum = "0997c976637b606099b9985693efa3581e84e41f5c11ba5255f88711058ad428"
 dependencies = [
  "der 0.7.5",
  "digest 0.10.6",
  "elliptic-curve 0.13.4",
  "rfc6979 0.4.0",
  "signature 2.1.0",
+ "spki 0.7.2",
 ]
 
 [[package]]
@@ -2997,7 +2998,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cadb76004ed8e97623117f3df85b17aaa6626ab0b0831e6573f104df16cd1bcc"
 dependencies = [
  "cfg-if",
- "ecdsa 0.16.6",
+ "ecdsa 0.16.7",
  "elliptic-curve 0.13.4",
  "once_cell",
  "sha2 0.10.6",
@@ -5733,9 +5734,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-core"
-version = "0.1.30"
+version = "0.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24eb03ba0eab1fd845050058ce5e616558e8f8d8fca633e6b163fe25c797213a"
+checksum = "0955b8137a1df6f1a2e9a37d8a6656291ff0297c1a97c24e0d8425fe2312f79a"
 dependencies = [
  "once_cell",
  "valuable",
