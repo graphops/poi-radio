@@ -21,7 +21,7 @@ use crate::{
     metrics::{
         ACTIVE_INDEXERS, DIVERGING_SUBGRAPHS, INDEXER_COUNT_BY_NPOI, LOCAL_NPOIS_TO_COMPARE,
     },
-    OperationError, RadioPayloadMessage, CONFIG,
+    radio_name, OperationError, RadioPayloadMessage, CONFIG,
 };
 
 /// A wrapper around an attested NPOI, tracks Indexers that have sent it plus their accumulated stake
@@ -594,17 +594,17 @@ pub async fn log_gossip_summary(
     }
 
     info!(
-        "Gossip events summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
+        "Gossip events summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}",
         "Chainhead blocks",
-        blocks_str.clone(),
+        blocks_str,
         "# of deployments tracked",
         num_topics,
         "# of deployment updates sent",
         send_success.len(),
         "# of deployments waiting for next message interval",
         skip_repeated.len(),
-        "Deployments catching up to chainhead",
-        trigger_failed,
+        "# of deployments catching up to chainhead",
+        trigger_failed.len(),
         "Deployments failed to build message",
         build_errors,
     );
@@ -616,7 +616,6 @@ pub async fn log_comparison_summary(
     blocks_str: String,
     num_topics: usize,
     result_strings: Vec<Result<ComparisonResult, OperationError>>,
-    radio_name: &str,
 ) {
     let slack_token = CONFIG.get().unwrap().lock().unwrap().slack_token.clone();
     let slack_channel = CONFIG.get().unwrap().lock().unwrap().slack_channel.clone();
@@ -650,7 +649,7 @@ pub async fn log_comparison_summary(
                     if let Err(e) = SlackBot::send_webhook(
                         token.to_string(),
                         channel,
-                        radio_name,
+                        radio_name(),
                         &x.to_string(),
                     )
                     .await
@@ -661,7 +660,7 @@ pub async fn log_comparison_summary(
 
                 if let Some(webhook_url) = discord_webhook.clone() {
                     if let Err(e) =
-                        DiscordBot::send_webhook(&webhook_url, radio_name, &x.to_string()).await
+                        DiscordBot::send_webhook(&webhook_url, radio_name(), &x.to_string()).await
                     {
                         warn!("Failed to send notification to Discord: {}", e);
                     }
@@ -678,7 +677,7 @@ pub async fn log_comparison_summary(
     DIVERGING_SUBGRAPHS.set(divergent_strings.len().try_into().unwrap());
 
     info!(
-        "Comparison summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
+        "Comparison summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
         "Chainhead blocks",
         blocks_str.clone(),
         "# of deployments tracked",
@@ -689,10 +688,10 @@ pub async fn log_comparison_summary(
         match_strings.len(),
         "# of deployments without remote attestation",
         not_found_strings.len(),
+        "# of deployments waiting for comparison trigger",
+        cmp_trigger_failed.len(),
         "Divergence",
         divergent_strings,
-        "Compare trigger out of bound",
-        cmp_trigger_failed,
         "Attestation failed",
         attestation_failed,
         "Comparison failed",
@@ -717,7 +716,6 @@ impl ErrorExtensions for AttestationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     // fn setup() -> (
     //     mock::Handle<&'static str, Option<&'static str>>,

@@ -2342,9 +2342,8 @@ dependencies = [
 
 [[package]]
 name = "graphcast-sdk"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a18e8d16bb48c15acb24ec2ec8408d567a7fd5e7c7e21d2cc442a1fff51edc6b"
+version = "0.1.2"
+source = "git+https://github.com/graphops/graphcast-sdk?branch=hope/dep-updates#41713786260b94d534dd54cadfb76077270bfb1e"
 dependencies = [
  "anyhow",
  "async-graphql",
@@ -5995,9 +5994,8 @@ checksum = "9d5b2c62b4012a3e1eca5a7e077d13b3bf498c4073e33ccd58626607748ceeca"
 
 [[package]]
 name = "waku-bindings"
-version = "0.1.0-rc.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49edd914cca7d658667fea6a0cb9c930f73266db9634dd87edbb2620840b4983"
+version = "0.1.0-rc.4"
+source = "git+https://github.com/axiomatic-aardvark/waku-rust-bindings#87762c4a6c305d86e17d59c57b7d5b72c8a7a700"
 dependencies = [
  "aes-gcm",
  "base64 0.21.0",
@@ -6017,9 +6015,8 @@ dependencies = [
 
 [[package]]
 name = "waku-sys"
-version = "0.1.0-rc.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fa9b91693afd41cb7f073bda5742b1b3a356423782aabb77bbff9121fbac9cf"
+version = "0.1.0-rc.3"
+source = "git+https://github.com/axiomatic-aardvark/waku-rust-bindings#87762c4a6c305d86e17d59c57b7d5b72c8a7a700"
 dependencies = [
  "bindgen",
 ]

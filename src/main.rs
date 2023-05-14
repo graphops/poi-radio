@@ -1,4 +1,6 @@
 use dotenv::dotenv;
+use poi_radio::attestation::{log_comparison_summary, log_gossip_summary};
+use poi_radio::radio_name;
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -12,21 +14,23 @@ use tokio::{
 use tracing::{debug, error, info, trace, warn};
 
 use graphcast_sdk::{
-    build_wallet,
-    graphcast_agent::GraphcastAgent,
-    graphcast_id_address,
-    graphql::{
-        client_graph_node::{update_network_chainheads, get_indexing_statuses, update_chainhead_blocks}, client_network::query_network_subgraph,
-        client_registry::query_registry_indexer,
+    graphql::client_graph_node::{
+        get_indexing_statuses, update_chainhead_blocks, update_network_chainheads,
     },
     networks::NetworkName,
     BlockPointer,
 };
 
 use poi_radio::{
-    attestation::LocalAttestationsMap, chainhead_block_str, config::Config, generate_topics,
-    metrics::handle_serve_metrics, operation::{gossip_poi, compare_poi}, radio_msg_handler, server::run_server,
-    CONFIG, GRAPHCAST_AGENT, MESSAGES, RADIO_NAME,
+    attestation::LocalAttestationsMap,
+    chainhead_block_str,
+    config::Config,
+    generate_topics,
+    metrics::handle_serve_metrics,
+    operation::{compare_poi, gossip_poi},
+    radio_msg_handler,
+    server::run_server,
+    CONFIG, GRAPHCAST_AGENT, MESSAGES,
 };
 
 #[macro_use]
@@ -34,13 +38,12 @@ extern crate partial_application;
 
 #[tokio::main]
 async fn main() {
-    _ = RADIO_NAME.set("poi-radio");
     dotenv().ok();
-    // console_subscriber::init();
 
     // Parse basic configurations
     let radio_config = Config::args();
 
+    // Set up Prometheus metrics url if configured
     if let Some(port) = radio_config.metrics_port {
         tokio::spawn(handle_serve_metrics(
             radio_config
@@ -52,79 +55,53 @@ async fn main() {
     }
 
     debug!("Initializing Graphcast Agent");
-
-    let graphcast_agent_config = radio_config
-        .to_graphcast_agent_config(RADIO_NAME.get().expect("RADIO_NAME required."))
-        .await
-        .unwrap_or_else(|e| panic!("Could not create GraphcastAgentConfig: {e}"));
-
     _ = GRAPHCAST_AGENT.set(
-        GraphcastAgent::new(graphcast_agent_config)
+        radio_config
+            .create_graphcast_agent(radio_name())
             .await
             .expect("Initialize Graphcast agent"),
     );
-
     debug!("Initialized Graphcast Agent");
-    // Using unwrap directly as the query has been ran in the set-up validation
-    let wallet = build_wallet(radio_config.wallet_input().unwrap()).unwrap();
-    // The query here must be Ok but so it is okay to panic here
-    // Alternatively, make validate_set_up return wallet, address, and stake
-    let my_address = query_registry_indexer(
-        radio_config.registry_subgraph.to_string(),
-        graphcast_id_address(&wallet),
-    )
-    .await
-    .unwrap();
-    let my_stake = query_network_subgraph(
-        radio_config.network_subgraph.to_string(),
-        my_address.clone(),
-    )
-    .await
-    .unwrap()
-    .indexer_stake();
-    info!(
-        "Initializing radio to act on behalf of indexer {:#?} with stake {}",
-        my_address.clone(),
-        my_stake
-    );
 
+    // Initialize program state
+    _ = CONFIG.set(Arc::new(SyncMutex::new(radio_config.clone())));
+    _ = MESSAGES.set(Arc::new(SyncMutex::new(vec![])));
+    let local_attestations: Arc<AsyncMutex<LocalAttestationsMap>> =
+        Arc::new(AsyncMutex::new(HashMap::new()));
+
+    let (my_address, _) = radio_config.basic_info().await.unwrap();
     let topic_coverage = radio_config.coverage.clone();
     let topic_network = radio_config.network_subgraph.clone();
     let topic_graph_node = radio_config.graph_node_endpoint.clone();
     let topic_static = &radio_config.topics.clone();
     let generate_topics = partial!(generate_topics => topic_coverage.clone(), topic_network.clone(), my_address.clone(), topic_graph_node.clone(), topic_static);
     let topics = generate_topics().await;
+    debug!(
+        "Found content topics for subscription: {:?}",
+        topics.clone()
+    );
     GRAPHCAST_AGENT
         .get()
         .unwrap()
         .update_content_topics(topics.clone())
         .await;
 
-    info!("Found content topics for subscription: {:?}", topics);
-    _ = MESSAGES.set(Arc::new(SyncMutex::new(vec![])));
-
     GRAPHCAST_AGENT
         .get()
         .unwrap()
         .register_handler(Arc::new(AsyncMutex::new(radio_msg_handler())))
         .expect("Could not register handler");
-    let local_attestations: Arc<AsyncMutex<LocalAttestationsMap>> =
-        Arc::new(AsyncMutex::new(HashMap::new()));
 
+    // Control flow
+    // TODO: expose to radio config for the users
     let running = Arc::new(AtomicBool::new(true));
     let skip_iteration = Arc::new(AtomicBool::new(false));
     let skip_iteration_clone = skip_iteration.clone();
 
-    _ = CONFIG.set(Arc::new(SyncMutex::new(radio_config)));
-    if CONFIG.get().unwrap().lock().unwrap().server_port.is_some() {
-        tokio::spawn(run_server(running.clone(), Arc::clone(&local_attestations)));
-    }
-
-    // Can later expose to radio config for the users
     let mut topic_update_interval = interval(Duration::from_secs(600));
-    // change back to 30 and 60
     let mut gossip_poi_interval = interval(Duration::from_secs(3));
     let mut comparison_interval = interval(Duration::from_secs(6));
+    // TODO: change back to 30 and 60
     // let mut gossip_poi_interval = interval(Duration::from_secs(30));
     // let mut comparison_interval = interval(Duration::from_secs(60));
 
@@ -132,11 +109,16 @@ async fn main() {
     let update_timeout = Duration::from_secs(15);
     let gossip_timeout = Duration::from_secs(150);
 
-    // Skip a main loop iteration when hit timeout
+    // Separate control flow thread to skip a main loop iteration when hit timeout
     tokio::spawn(async move {
         tokio::time::sleep(iteration_timeout).await;
         skip_iteration_clone.store(true, Ordering::SeqCst);
     });
+
+    // Initialize Http server if configured
+    if CONFIG.get().unwrap().lock().unwrap().server_port.is_some() {
+        tokio::spawn(run_server(running.clone(), Arc::clone(&local_attestations)));
+    }
 
     // Main loop for sending messages, can factor out
     // and take radio specific query and parsing for radioPayload
@@ -215,11 +197,17 @@ async fn main() {
                         num_topics,
                     );
 
-                    gossip_poi(
-                        identifiers,
+                    let send_ops = gossip_poi(
+                        identifiers.clone(),
                         &network_chainhead_blocks.clone(),
                         &subgraph_network_latest_blocks.clone(),
-                        local_attestations,
+                        local_attestations.clone(),
+                    ).await;
+
+                    log_gossip_summary(
+                        blocks_str,
+                        identifiers.len(),
+                        send_ops,
                     )
                 }).await;
 
@@ -256,29 +244,24 @@ async fn main() {
                             continue;
                         }
                     };
-                    let _ =
-                        update_network_chainheads(
+                    update_network_chainheads(
                             indexing_status,
                             &mut network_chainhead_blocks,
                         );
-                    
-                    let identifiers = GRAPHCAST_AGENT.get().unwrap().content_identifiers().await;
-                    let num_topics = identifiers.len();
-                    let blocks_str = chainhead_block_str(&network_chainhead_blocks);
-                    info!(
-                        "Network statuses:\n{}: {:#?}\n{}: {:#?}\n{}: {}",
-                        "Chainhead blocks",
-                        blocks_str.clone(),
-                        "Number of gossip peers",
-                        GRAPHCAST_AGENT.get().unwrap().number_of_peers(),
-                        "Number of tracked deployments (topics)",
-                        num_topics,
-                    );
 
-                    compare_poi(
-                        identifiers,
-                        &Arc::new(AsyncMutex::new(network_chainhead_blocks.clone())),
+                    let identifiers = GRAPHCAST_AGENT.get().unwrap().content_identifiers().await;
+                    let blocks_str = chainhead_block_str(&network_chainhead_blocks);
+
+                    let comparison_res = compare_poi(
+                        identifiers.clone(),
                         local_attestations,
+                    )
+                    .await;
+
+                    log_comparison_summary(
+                        blocks_str,
+                        identifiers.len(),
+                        comparison_res,
                     )
                 }).await;
 

@@ -17,16 +17,14 @@ use graphcast_sdk::{
     BlockPointer, NetworkBlockError, NetworkPointer,
 };
 
-use crate::attestation::{log_comparison_summary, log_gossip_summary};
 use crate::{
     attestation::{
-        clear_local_attestation, compare_attestations, local_comparison_point,
-        process_messages, save_local_attestation, Attestation, ComparisonResult,
+        clear_local_attestation, compare_attestations, local_comparison_point, process_messages,
+        save_local_attestation, Attestation, ComparisonResult,
     },
-    chainhead_block_str,
     graphql::query_graph_node_poi,
     metrics::CACHED_MESSAGES,
-    OperationError, RadioPayloadMessage, CONFIG, GRAPHCAST_AGENT, MESSAGES, RADIO_NAME,
+    OperationError, RadioPayloadMessage, CONFIG, GRAPHCAST_AGENT, MESSAGES,
 };
 
 /// Determine the parameters for messages to send and compare
@@ -80,11 +78,7 @@ pub async fn gossip_set_up(
             .is_some(),
     );
 
-    Ok((
-        network_name,
-        latest_block,
-        message_block,
-    ))
+    Ok((network_name, latest_block, message_block))
 }
 
 /// Construct the message and send it to Graphcast network
@@ -212,7 +206,8 @@ pub async fn message_comparison(
         id.clone(),
         collect_window_duration,
     )
-    .await {
+    .await
+    {
         Some((block, window)) if time >= window => (block, window),
         Some((compare_block, window)) => {
             let err_msg = format!("Deployment {} comparison not triggered: collecting messages until time {}; currently {time}", id.clone(), window);
@@ -224,13 +219,12 @@ pub async fn message_comparison(
             ));
         }
         _ => {
-            let err_msg = format!("Deployment {} comparison not triggered: no matching attestation to compare", id.clone());
+            let err_msg = format!(
+                "Deployment {} comparison not triggered: no matching attestation to compare",
+                id.clone()
+            );
             debug!("{}", err_msg);
-            return Err(OperationError::CompareTrigger(
-                id.clone(),
-                0,
-                err_msg,
-            ));
+            return Err(OperationError::CompareTrigger(id.clone(), 0, err_msg));
         }
     };
 
@@ -240,7 +234,7 @@ pub async fn message_comparison(
         .filter(|&m| m.block_number == compare_block && m.nonce <= collect_window_end)
         .cloned()
         .collect();
-        
+
     debug!(
         "Comparing validated and filtered messages:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}",
         "Deployment",
@@ -291,26 +285,25 @@ pub async fn gossip_poi(
     network_chainhead_blocks: &Arc<AsyncMutex<HashMap<NetworkName, BlockPointer>>>,
     subgraph_network_latest_blocks: &HashMap<String, NetworkPointer>,
     local_attestations: Arc<AsyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
-) {
+) -> Vec<Result<String, OperationError>> {
     let mut send_handles = vec![];
     for id in identifiers.clone() {
         /* Set up */
         let local_attestations = Arc::clone(&local_attestations);
-        let (network_name, latest_block, message_block) =
-            if let Ok(params) = gossip_set_up(
-                id.clone(),
-                network_chainhead_blocks,
-                subgraph_network_latest_blocks,
-                Arc::clone(&local_attestations),
-            )
-            .await
-            {
-                params
-            } else {
-                let err_msg = "Failed to set up message parameters for ...".to_string();
-                warn!("{}", err_msg);
-                continue;
-            };
+        let (network_name, latest_block, message_block) = if let Ok(params) = gossip_set_up(
+            id.clone(),
+            network_chainhead_blocks,
+            subgraph_network_latest_blocks,
+            Arc::clone(&local_attestations),
+        )
+        .await
+        {
+            params
+        } else {
+            let err_msg = "Failed to set up message parameters for ...".to_string();
+            warn!("{}", err_msg);
+            continue;
+        };
 
         /* Send message */
         let id_cloned = id.clone();
@@ -337,21 +330,13 @@ pub async fn gossip_poi(
             send_ops.push(s);
         }
     }
-    
-    let blocks_str = chainhead_block_str(&*network_chainhead_blocks.lock().await);
-    log_gossip_summary(
-        blocks_str,
-        identifiers.len(),
-        send_ops,
-    )
-    .await;
+    send_ops
 }
 
 pub async fn compare_poi(
     identifiers: Vec<String>,
-    network_chainhead_blocks: &Arc<AsyncMutex<HashMap<NetworkName, BlockPointer>>>,
     local_attestations: Arc<AsyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
-) {
+) -> Vec<Result<ComparisonResult, OperationError>> {
     let mut compare_handles = vec![];
     for id in identifiers.clone() {
         /* Set up */
@@ -362,7 +347,7 @@ pub async fn compare_poi(
             .unwrap()
             .collect_message_duration;
         let id_cloned = id.clone();
-        
+
         let registry_subgraph = CONFIG
             .get()
             .unwrap()
@@ -450,12 +435,5 @@ pub async fn compare_poi(
             }
         }
     }
-    let blocks_str = chainhead_block_str(&*network_chainhead_blocks.lock().await);
-    log_comparison_summary(
-        blocks_str,
-        identifiers.len(),
-        compare_ops,
-        RADIO_NAME.get().unwrap(),
-    )
-    .await;
+    compare_ops
 }

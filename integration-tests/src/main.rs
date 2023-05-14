@@ -5,7 +5,7 @@ pub mod utils;
 use checks::simple_tests::run_simple_tests;
 use dotenv::dotenv;
 use poi_radio::config::Config;
-use poi_radio::{CONFIG, RADIO_NAME};
+use poi_radio::CONFIG;
 use setup::basic::run_basic_instance;
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::{env, str::FromStr};
@@ -77,7 +77,6 @@ pub async fn main() {
     let args = Config::args();
 
     _ = CONFIG.set(Arc::new(SyncMutex::new(args)));
-    _ = RADIO_NAME.set("test-radio");
 
     let test_instance = env::var("INSTANCE").ok();
     let test_check = env::var("CHECK").ok();
