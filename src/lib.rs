@@ -1,4 +1,5 @@
 use async_graphql::{Error, ErrorExtensions, SimpleObject};
+use attestation::LocalAttestationsMap;
 use autometrics::autometrics;
 use config::{Config, CoverageLevel};
 use ethers_contract::EthAbiType;
@@ -14,7 +15,10 @@ use std::{
         Arc, Mutex as SyncMutex,
     },
 };
-use tokio::signal;
+use tokio::{
+    signal,
+    sync::Mutex as AsyncMutex,
+};
 use tracing::{error, trace};
 
 use graphcast_sdk::{
@@ -269,6 +273,12 @@ impl ErrorExtensions for OperationError {
     fn extend(&self) -> Error {
         Error::new(format!("{}", self))
     }
+}
+
+/// Persisted radio state
+pub struct RadioState {
+    local_attestations: LocalAttestationsMap,
+    remote_messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
 }
 
 #[cfg(test)]
