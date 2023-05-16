@@ -151,14 +151,15 @@ pub mod tests {
             }
         } else {
             let count = COUNTER.fetch_add(1, Ordering::SeqCst);
-            if count >= 3 {
-                trace!("Exiting as there were no messages received within 3 attempts");
+            if count >= 50 {
+                trace!("Exiting as there were no messages received within 50 attempts");
                 error!("{}", "skip_messages_from_self test failed");
+                std::process::exit(1);
             }
         }
 
-        if messages.len() >= 1 {
-            info!("1 valid message received!");
+        if messages.len() >= 3 {
+            info!("3 valid message received!");
             info!("{}", "simple receiver check is successful ✅");
 
             info!("Checking content topics");

@@ -1,8 +1,8 @@
 #[cfg(test)]
 pub mod tests {
+    use crate::run_test_radio;
     use std::sync::Arc;
 
-    use crate::integration_tests::setup::test_radio::tests::run_test_radio;
     use crate::integration_tests::utils::RadioTestConfig;
     use crate::{
         attestation::{LocalAttestationsMap, RemoteAttestationsMap},
@@ -25,7 +25,7 @@ pub mod tests {
         let invalid_block_hash =
             "4rfba1ba9fb18b0034965712598be1368edcf91ae2c551d59462aab578dab9c5".to_string();
 
-        let mut config = RadioTestConfig::new();
+        let mut config = RadioTestConfig::default_config();
         config.invalid_hash = Some(invalid_block_hash);
 
         run_test_radio(

@@ -2,8 +2,8 @@
 pub mod tests {
     use std::sync::Arc;
 
-    use crate::integration_tests::setup::test_radio::tests::run_test_radio;
     use crate::integration_tests::utils::RadioTestConfig;
+    use crate::run_test_radio;
     use crate::{
         attestation::{LocalAttestationsMap, RemoteAttestationsMap},
         MessagesVec,

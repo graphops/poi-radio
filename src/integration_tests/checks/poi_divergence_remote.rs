@@ -1,6 +1,6 @@
 #[cfg(test)]
 pub mod tests {
-    use std::{env, sync::Arc};
+    use std::sync::Arc;
 
     use crate::{
         attestation::{LocalAttestationsMap, RemoteAttestationsMap},
@@ -87,7 +87,6 @@ pub mod tests {
     #[tokio::test]
     pub async fn test_poi_divergence_remote() {
         let config = RadioTestConfig::default_config();
-        env::set_var("COLLECT_MESSAGE_DURATION", "120");
 
         run_test_radio(
             Arc::new(config),

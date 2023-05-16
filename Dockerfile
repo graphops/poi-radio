@@ -1,16 +1,16 @@
 FROM rust:1-bullseye AS build-image
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN apt-get update &&
+    apt-get install -y --no-install-recommends \
         wget \
         curl \
         libpq-dev \
         pkg-config \
         libssl-dev \
         clang \
-        build-essential \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+        build-essential &&
+    apt-get clean &&
+    rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
@@ -23,9 +23,9 @@ ENV PATH=$PATH:/usr/local/go/bin
 RUN cargo build --release
 
 FROM alpine:3.17.3 as alpine
-RUN set -x \
-    && apk update \
-    && apk add --no-cache upx dumb-init
+RUN set -x &&
+    apk update &&
+    apk add --no-cache upx dumb-init
 COPY --from=build-image /poi-radio/target/release/poi-radio /poi-radio/target/release/poi-radio
 RUN upx --overlay=strip --best /poi-radio/target/release/poi-radio
 

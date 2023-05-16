@@ -70,6 +70,8 @@ pub async fn run_radio_impl<S, A, P>(
     let mut my_address: String;
     let mut wallet: Wallet<SigningKey>;
 
+    error!("runtime conff start of impl{:?}", runtime_config.clone());
+
     #[cfg(not(test))]
     {
         use dotenv::dotenv;
@@ -180,6 +182,8 @@ pub async fn run_radio_impl<S, A, P>(
         env::set_var("MOCK_SENDER", graphcast_id.clone());
         let indexer_address = generate_deterministic_address(&graphcast_id);
 
+        error!("runtime conff {:?}", runtime_config);
+
         let mock_server_uri = setup_mock_server(
             round_to_nearest(Utc::now().timestamp()).try_into().unwrap(),
             &indexer_address,
@@ -197,6 +201,9 @@ pub async fn run_radio_impl<S, A, P>(
         let private_key = env::var("PRIVATE_KEY").expect("No private key provided.");
         let registry_subgraph = env::var("REGISTRY_SUBGRAPH_ENDPOINT")
             .expect("No registry subgraph endpoint provided.");
+
+        info!("wtf registry sub 44 {:?}", registry_subgraph.clone());
+
         let network_subgraph =
             env::var("NETWORK_SUBGRAPH_ENDPOINT").expect("No network subgraph endpoint provided.");
         let graph_node_endpoint = env::var("GRAPH_NODE_STATUS_ENDPOINT")
@@ -277,6 +284,8 @@ pub async fn run_radio_impl<S, A, P>(
         let mut config = test_config();
         config.collect_message_duration = collect_message_duration;
         config.graph_node_endpoint = graph_node_endpoint;
+        config.registry_subgraph = registry_subgraph.clone();
+        config.network_subgraph = network_subgraph.clone();
 
         config.topics = runtime_config.subgraphs.clone().unwrap();
         _ = CONFIG.set(Arc::new(SyncMutex::new(config)));
@@ -433,6 +442,8 @@ pub async fn run_test_radio<S, A, P>(
     A: Fn(u64, &RemoteAttestationsMap, &LocalAttestationsMap) + Send + 'static + Copy + Sync,
     P: Fn(MessagesVec, u64, &str) + Send + 'static + Copy + Sync,
 {
+    error!("runtime conff start of first{:?}", runtime_config.clone());
+
     run_radio_impl(
         Some(runtime_config),
         Some(success_handler),
@@ -494,6 +505,8 @@ impl RadioPayloadMessage {
 pub fn radio_msg_handler(
 ) -> impl Fn(Result<GraphcastMessage<RadioPayloadMessage>, WakuHandlingError>) {
     |msg: Result<GraphcastMessage<RadioPayloadMessage>, WakuHandlingError>| {
+        trace!("Received INVALID message: {:?}", msg);
+
         // TODO: Handle the error case by incrementing a Prometheus "error" counter
         if let Ok(msg) = msg {
             trace!("Received message: {:?}", msg);

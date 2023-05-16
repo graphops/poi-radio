@@ -134,6 +134,9 @@ pub async fn process_messages(
         let sender = msg
             .recover_sender_address()
             .map_err(AttestationError::BuildError)?;
+
+        info!("registry subgraph 566 {:?}", registry_subgraph);
+
         let indexer_address = query_registry_indexer(registry_subgraph.to_string(), sender.clone())
             .await
             .map_err(|e| AttestationError::BuildError(BuildMessageError::FieldDerivations(e)))?;

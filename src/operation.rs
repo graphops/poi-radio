@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::log::warn;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace};
 
 use graphcast_sdk::{
     determine_message_block,
@@ -352,6 +352,7 @@ where
     );
 
     let remote_attestations_result = if cfg!(test) {
+        info!("should be here {:?}", registry_subgraph.clone());
         process_messages(
             filter_msg,
             &registry_subgraph,
@@ -495,6 +496,8 @@ pub async fn gossip_poi<S, A, P>(
 
         let runtime_config_indexer_stake = runtime_config.as_ref().unwrap().indexer_stake;
         let graphcast_id_cloned = graphcast_id.clone();
+
+        info!("wtf registry sub 55 {:?}", registry_subgraph.clone());
 
         let compare_handle = tokio::spawn(async move {
             message_comparison(

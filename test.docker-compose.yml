@@ -1,0 +1,7 @@
+version: '3.8'
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: test.Dockerfile
+    command: [ "bash", "-c", "/poi-radio/scripts/e2e/run_tests.sh" ]
