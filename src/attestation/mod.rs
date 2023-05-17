@@ -21,7 +21,7 @@ use crate::{
     metrics::{
         ACTIVE_INDEXERS, DIVERGING_SUBGRAPHS, INDEXER_COUNT_BY_NPOI, LOCAL_NPOIS_TO_COMPARE,
     },
-    OperationError, RadioPayloadMessage, CONFIG, MESSAGES,
+    radio_name, OperationError, RadioPayloadMessage, CONFIG,
 };
 
 /// A wrapper around an attested NPOI, tracks Indexers that have sent it plus their accumulated stake
@@ -574,24 +574,12 @@ fn hash_addresses(addresses: &[String]) -> String {
 
 /// This function logs the operational summary of the main event loop
 #[allow(clippy::too_many_arguments)]
-pub async fn log_summary(
+pub async fn log_gossip_summary(
     blocks_str: String,
     num_topics: usize,
     messages_sent: Vec<Result<String, OperationError>>,
-    result_strings: Vec<Result<ComparisonResult, OperationError>>,
-    radio_name: &str,
 ) {
-    let slack_token = CONFIG.get().unwrap().lock().unwrap().slack_token.clone();
-    let slack_channel = CONFIG.get().unwrap().lock().unwrap().slack_channel.clone();
-    let discord_webhook = CONFIG
-        .get()
-        .unwrap()
-        .lock()
-        .unwrap()
-        .discord_webhook
-        .clone();
-
-    // Generate send summary
+    // Generate gossip summary
     let mut send_success = vec![];
     let mut trigger_failed = vec![];
     let mut skip_repeated = vec![];
@@ -604,6 +592,40 @@ pub async fn log_summary(
             Err(e) => build_errors.push(e),
         }
     }
+
+    info!(
+        "Gossip events summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}",
+        "Chainhead blocks",
+        blocks_str,
+        "# of deployments tracked",
+        num_topics,
+        "# of deployment updates sent",
+        send_success.len(),
+        "# of deployments waiting for next message interval",
+        skip_repeated.len(),
+        "# of deployments catching up to chainhead",
+        trigger_failed.len(),
+        "Deployments failed to build message",
+        build_errors,
+    );
+}
+
+/// This function logs the operational summary of the main event loop
+#[allow(clippy::too_many_arguments)]
+pub async fn log_comparison_summary(
+    blocks_str: String,
+    num_topics: usize,
+    result_strings: Vec<Result<ComparisonResult, OperationError>>,
+) {
+    let slack_token = CONFIG.get().unwrap().lock().unwrap().slack_token.clone();
+    let slack_channel = CONFIG.get().unwrap().lock().unwrap().slack_channel.clone();
+    let discord_webhook = CONFIG
+        .get()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .discord_webhook
+        .clone();
 
     // Generate attestation summary
     let mut match_strings = vec![];
@@ -627,7 +649,7 @@ pub async fn log_summary(
                     if let Err(e) = SlackBot::send_webhook(
                         token.to_string(),
                         channel,
-                        radio_name,
+                        radio_name(),
                         &x.to_string(),
                     )
                     .await
@@ -638,7 +660,7 @@ pub async fn log_summary(
 
                 if let Some(webhook_url) = discord_webhook.clone() {
                     if let Err(e) =
-                        DiscordBot::send_webhook(&webhook_url, radio_name, &x.to_string()).await
+                        DiscordBot::send_webhook(&webhook_url, radio_name(), &x.to_string()).await
                     {
                         warn!("Failed to send notification to Discord: {}", e);
                     }
@@ -655,28 +677,18 @@ pub async fn log_summary(
     DIVERGING_SUBGRAPHS.set(divergent_strings.len().try_into().unwrap());
 
     info!(
-        "Operation summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
+        "Comparison summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
         "Chainhead blocks",
         blocks_str.clone(),
         "# of deployments tracked",
         num_topics,
-        "# of deployment updates sent",
-        send_success.len(),
-        "# of deployments waiting for next message interval",
-        skip_repeated.len(),
-        "# of deployments catching up to chainhead",
-        trigger_failed.len(),
-        "Deployments failed to build message",
-        build_errors,
-        "# of messages cached",
-        MESSAGES.get().unwrap().lock().unwrap().len(),
         "# of deployments actively cross-checked",
         match_strings.len() + divergent_strings.len(),
         "# of successful attestations",
         match_strings.len(),
         "# of deployments without matching attestations",
         not_found_strings.len(),
-        "# of deployment waiting for comparison trigger",
+        "# of deployments waiting for comparison trigger",
         cmp_trigger_failed.len(),
         "Divergence",
         divergent_strings,

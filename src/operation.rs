@@ -19,25 +19,22 @@ use graphcast_sdk::{
 
 use crate::{
     attestation::{
-        clear_local_attestation, compare_attestations, local_comparison_point, log_summary,
-        process_messages, save_local_attestation, Attestation, ComparisonResult,
+        clear_local_attestation, compare_attestations, local_comparison_point, process_messages,
+        save_local_attestation, Attestation, ComparisonResult,
     },
-    chainhead_block_str,
     graphql::query_graph_node_poi,
     metrics::CACHED_MESSAGES,
-    OperationError, RadioPayloadMessage, CONFIG, GRAPHCAST_AGENT, MESSAGES, RADIO_NAME,
+    OperationError, RadioPayloadMessage, CONFIG, GRAPHCAST_AGENT, MESSAGES,
 };
 
 /// Determine the parameters for messages to send and compare
 #[autometrics(track_concurrency)]
-pub async fn message_set_up(
+pub async fn gossip_set_up(
     id: String,
     network_chainhead_blocks: &Arc<AsyncMutex<HashMap<NetworkName, BlockPointer>>>,
     subgraph_network_latest_blocks: &HashMap<String, NetworkPointer>,
     local_attestations: Arc<AsyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
-    collect_window_duration: i64,
-) -> Result<(NetworkName, BlockPointer, u64, Option<u64>, Option<i64>), BuildMessageError> {
-    let time = Utc::now().timestamp();
+) -> Result<(NetworkName, BlockPointer, u64), BuildMessageError> {
     // Get the indexing network of the deployment
     // and update the NETWORK message block
     let (network_name, latest_block) = match subgraph_network_latest_blocks.get(&id.clone()) {
@@ -60,20 +57,8 @@ pub async fn message_set_up(
             Err(e) => return Err(BuildMessageError::Network(e)),
         };
 
-    // Get trigger from the local corresponding attestation
-    let (compare_block, collect_window_end) = match local_comparison_point(
-        Arc::clone(&local_attestations),
-        id.clone(),
-        collect_window_duration,
-    )
-    .await
-    {
-        Some((block, time)) => (Some(block), Some(time)),
-        None => (None, None),
-    };
-
     debug!(
-        "Deployment status:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {}",
+        "Deployment status:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}",
         "IPFS Hash",
         id.clone(),
         "Network",
@@ -91,21 +76,9 @@ pub async fn message_set_up(
             .get(&id.clone())
             .and_then(|blocks| blocks.get(&message_block))
             .is_some(),
-        "current time",
-        time,
-        "Comparison time",
-        collect_window_end,
-        "Comparison countdown (seconds)",
-        max(0, time - collect_window_end.unwrap_or_default()),
     );
 
-    Ok((
-        network_name,
-        latest_block,
-        message_block,
-        compare_block,
-        collect_window_end,
-    ))
+    Ok((network_name, latest_block, message_block))
 }
 
 /// Construct the message and send it to Graphcast network
@@ -208,9 +181,7 @@ pub async fn message_send(
 #[autometrics(track_concurrency)]
 pub async fn message_comparison(
     id: String,
-    collect_window_end: Option<i64>,
-    latest_block: u64,
-    compare_block: Option<u64>,
+    collect_window_duration: i64,
     registry_subgraph: String,
     network_subgraph: String,
     messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
@@ -218,32 +189,52 @@ pub async fn message_comparison(
 ) -> Result<ComparisonResult, OperationError> {
     let time = Utc::now().timestamp();
 
-    // Update to only process the identifier&compare_block related messages within the collection window
-    let filter_msg: Vec<GraphcastMessage<RadioPayloadMessage>> = messages
-        .iter()
-        .filter(|&m| Some(m.block_number) == compare_block && Some(m.nonce) <= collect_window_end)
-        .cloned()
-        .collect();
-
-    let (compare_block, _collect_window_end) = match (compare_block, collect_window_end) {
-        (Some(block), Some(window)) if time >= window && latest_block > block => (block, window),
-        _ => {
-            let err_msg = format!("Deployment {} comparison not triggered: collecting messages until time {}; currently {time}", id.clone(), match collect_window_end { None => String::from("None"), Some(x) => x.to_string()},);
+    let (compare_block, collect_window_end) = match local_comparison_point(
+        Arc::clone(&local_attestations),
+        id.clone(),
+        collect_window_duration,
+    )
+    .await
+    {
+        Some((block, window)) if time >= window => (block, window),
+        Some((compare_block, window)) => {
+            let err_msg = format!("Deployment {} comparison not triggered: collecting messages until time {}; currently {time}", id.clone(), window);
             debug!("{}", err_msg);
             return Err(OperationError::CompareTrigger(
                 id.clone(),
-                compare_block.unwrap_or_default(),
+                compare_block,
                 err_msg,
             ));
         }
+        _ => {
+            let err_msg = format!(
+                "Deployment {} comparison not triggered: no matching attestation to compare",
+                id.clone()
+            );
+            debug!("{}", err_msg);
+            return Err(OperationError::CompareTrigger(id.clone(), 0, err_msg));
+        }
     };
 
+    // Update to only process the identifier&compare_block related messages within the collection window
+    let filter_msg: Vec<GraphcastMessage<RadioPayloadMessage>> = messages
+        .iter()
+        .filter(|&m| m.block_number == compare_block && m.nonce <= collect_window_end)
+        .cloned()
+        .collect();
+
     debug!(
-        "Comparing validated and filtered messages:\n{}: {}\n{}: {}\n{}: {}",
+        "Comparing validated and filtered messages:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}",
         "Deployment",
         id.clone(),
-        "Block",
+        "current time",
+        time,
+        "Comparison time",
+        collect_window_end,
+        "Comparison block",
         compare_block,
+        "Comparison countdown (seconds)",
+        max(0, time - collect_window_end),
         "Number of messages matching deployment and block number",
         filter_msg.len(),
     );
@@ -282,39 +273,29 @@ pub async fn gossip_poi(
     network_chainhead_blocks: &Arc<AsyncMutex<HashMap<NetworkName, BlockPointer>>>,
     subgraph_network_latest_blocks: &HashMap<String, NetworkPointer>,
     local_attestations: Arc<AsyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
-) {
+) -> Vec<Result<String, OperationError>> {
     let mut send_handles = vec![];
-    let mut compare_handles = vec![];
     for id in identifiers.clone() {
         /* Set up */
-        let collect_duration = CONFIG
-            .get()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .collect_message_duration;
         let local_attestations = Arc::clone(&local_attestations);
-        let (network_name, latest_block, message_block, compare_block, collect_window_end) =
-            if let Ok(params) = message_set_up(
-                id.clone(),
-                network_chainhead_blocks,
-                subgraph_network_latest_blocks,
-                Arc::clone(&local_attestations),
-                collect_duration,
-            )
-            .await
-            {
-                params
-            } else {
-                let err_msg = "Failed to set up message parameters for ...".to_string();
-                warn!("{}", err_msg);
-                continue;
-            };
+        let (network_name, latest_block, message_block) = if let Ok(params) = gossip_set_up(
+            id.clone(),
+            network_chainhead_blocks,
+            subgraph_network_latest_blocks,
+            Arc::clone(&local_attestations),
+        )
+        .await
+        {
+            params
+        } else {
+            let err_msg = "Failed to set up message parameters for ...".to_string();
+            warn!("{}", err_msg);
+            continue;
+        };
 
-        let latest_block_number = latest_block.number;
         /* Send message */
         let id_cloned = id.clone();
-        let id_cloned2 = id.clone();
+
         let local = Arc::clone(&local_attestations);
         let send_handle = tokio::spawn(async move {
             message_send(
@@ -327,6 +308,33 @@ pub async fn gossip_poi(
             )
             .await
         });
+
+        send_handles.push(send_handle);
+    }
+
+    let mut send_ops = vec![];
+    for handle in send_handles {
+        if let Ok(s) = handle.await {
+            send_ops.push(s);
+        }
+    }
+    send_ops
+}
+
+pub async fn compare_poi(
+    identifiers: Vec<String>,
+    local_attestations: Arc<AsyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
+) -> Vec<Result<ComparisonResult, OperationError>> {
+    let mut compare_handles = vec![];
+    for id in identifiers.clone() {
+        /* Set up */
+        let collect_duration: i64 = CONFIG
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .collect_message_duration;
+        let id_cloned = id.clone();
 
         let registry_subgraph = CONFIG
             .get()
@@ -352,10 +360,8 @@ pub async fn gossip_poi(
 
         let compare_handle = tokio::spawn(async move {
             message_comparison(
-                id_cloned2,
-                collect_window_end,
-                latest_block_number,
-                compare_block,
+                id_cloned,
+                collect_duration,
                 registry_subgraph.clone(),
                 network_subgraph.clone(),
                 filtered_msg,
@@ -363,16 +369,9 @@ pub async fn gossip_poi(
             )
             .await
         });
-        send_handles.push(send_handle);
         compare_handles.push(compare_handle);
     }
 
-    let mut send_ops = vec![];
-    for handle in send_handles {
-        if let Ok(s) = handle.await {
-            send_ops.push(s);
-        }
-    }
     let mut compare_ops = vec![];
     for handle in compare_handles {
         let res = handle.await;
@@ -422,13 +421,5 @@ pub async fn gossip_poi(
             }
         }
     }
-    let blocks_str = chainhead_block_str(&*network_chainhead_blocks.lock().await);
-    log_summary(
-        blocks_str,
-        identifiers.len(),
-        send_ops,
-        compare_ops,
-        RADIO_NAME.get().unwrap(),
-    )
-    .await;
+    compare_ops
 }

@@ -9,6 +9,7 @@ repository = "https://github.com/graphops/poi-radio"
 keywords = ["graphprotocol", "data-integrity", "Indexer", "waku", "p2p"]
 categories = ["network-programming", "web-programming::http-client"]
 default-run = "poi-radio"
+exclude = ["integration-tests/*"]
 
 [dependencies]
 graphcast-sdk = { git = "https://github.com/graphops/graphcast-sdk" }

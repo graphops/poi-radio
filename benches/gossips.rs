@@ -10,7 +10,7 @@ use graphcast_sdk::networks::NetworkName;
 use graphcast_sdk::{BlockPointer, NetworkPointer};
 use poi_radio::attestation::LocalAttestationsMap;
 use poi_radio::operation::gossip_poi;
-use poi_radio::{config::Config, CONFIG, RADIO_NAME};
+use poi_radio::{config::Config, CONFIG};
 
 fn gossip_poi_bench(c: &mut Criterion) {
     let identifiers = black_box(vec!["identifier1".to_string(), "identifier2".to_string()]);
@@ -54,7 +54,6 @@ fn gossip_poi_bench(c: &mut Criterion) {
         server_port: None,
     });
     _ = black_box(CONFIG.set(Arc::new(SyncMutex::new(config))));
-    _ = black_box(RADIO_NAME.set("bench-radio"));
 
     c.bench_function("gossip_poi", move |b| {
         b.to_async(FuturesExecutor).iter(|| async {

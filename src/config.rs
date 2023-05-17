@@ -1,12 +1,18 @@
 use clap::Parser;
 use ethers::signers::WalletError;
 use graphcast_sdk::build_wallet;
+use graphcast_sdk::graphcast_agent::GraphcastAgent;
 use graphcast_sdk::graphcast_agent::GraphcastAgentConfig;
 use graphcast_sdk::graphcast_agent::GraphcastAgentError;
 use graphcast_sdk::graphcast_id_address;
+use graphcast_sdk::graphql::client_network::query_network_subgraph;
+use graphcast_sdk::graphql::client_registry::query_registry_indexer;
+use graphcast_sdk::graphql::QueryError;
 use graphcast_sdk::init_tracing;
 use serde::{Deserialize, Serialize};
 use tracing::info;
+
+use crate::radio_name;
 
 #[derive(clap::ValueEnum, Clone, Debug, Serialize, Deserialize)]
 pub enum CoverageLevel {
@@ -279,6 +285,35 @@ impl Config {
         )
         .await
     }
+
+    pub async fn basic_info(&self) -> Result<(String, f32), QueryError> {
+        // Using unwrap directly as the query has been ran in the set-up validation
+        let wallet = build_wallet(self.wallet_input().unwrap()).unwrap();
+        // The query here must be Ok but so it is okay to panic here
+        // Alternatively, make validate_set_up return wallet, address, and stake
+        let my_address = query_registry_indexer(
+            self.registry_subgraph.to_string(),
+            graphcast_id_address(&wallet),
+        )
+        .await
+        .unwrap();
+        let my_stake =
+            query_network_subgraph(self.network_subgraph.to_string(), my_address.clone())
+                .await
+                .unwrap()
+                .indexer_stake();
+        info!(
+            "Initializing radio to act on behalf of indexer {:#?} with stake {}",
+            my_address.clone(),
+            my_stake
+        );
+        Ok((my_address, my_stake))
+    }
+
+    pub async fn create_graphcast_agent(&self) -> Result<GraphcastAgent, GraphcastAgentError> {
+        let config = self.to_graphcast_agent_config(radio_name()).await.unwrap();
+        GraphcastAgent::new(config).await
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -287,6 +322,8 @@ pub enum ConfigError {
     ValidateInput(String),
     #[error("Generate JSON representation of the config file: {0}")]
     GenerateJson(serde_json::Error),
+    #[error("QueryError: {0}")]
+    QueryError(QueryError),
     #[error("Toml file error: {0}")]
     ReadStr(std::io::Error),
     #[error("Unknown error: {0}")]
