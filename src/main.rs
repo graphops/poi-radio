@@ -124,7 +124,7 @@ async fn main() {
     let mut gossip_poi_interval = interval(Duration::from_secs(30));
 
     let iteration_timeout = Duration::from_secs(180);
-    let update_timeout = Duration::from_secs(15);
+    let update_timeout = Duration::from_secs(10);
     let gossip_timeout = Duration::from_secs(150);
 
     // Skip a main loop iteration when hit timeout

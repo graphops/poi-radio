@@ -1,14 +1,18 @@
-use async_graphql::{Context, EmptyMutation, EmptySubscription, Object, Schema};
-use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
+use async_graphql::{
+    Context, EmptyMutation, EmptySubscription, InputObject, Object, Schema, SimpleObject,
+};
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::debug;
 
-use crate::attestation::{
-    attestations_to_vec, compare_attestations, process_messages, AttestationEntry,
-    AttestationError, ComparisonResult, LocalAttestationsMap,
+use crate::{
+    attestation::{
+        attestations_to_vec, compare_attestations, process_messages, Attestation, AttestationEntry,
+        AttestationError, ComparisonResult, ComparisonResultType, LocalAttestationsMap,
+    },
+    RadioPayloadMessage, CONFIG, MESSAGES,
 };
-use crate::{RadioPayloadMessage, CONFIG, MESSAGES};
+use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
 
 pub(crate) type POIRadioSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
 
@@ -51,7 +55,7 @@ impl QueryRoot {
         let filtered = attestations_to_vec(attestations)
             .await
             .into_iter()
-            .filter(|entry| filter_fn(entry, &identifier, &block))
+            .filter(|entry| filter_attestations(entry, &identifier, &block))
             .collect::<Vec<_>>();
 
         Ok(filtered)
@@ -63,12 +67,19 @@ impl QueryRoot {
         ctx: &Context<'_>,
         deployment: Option<String>,
         block: Option<u64>,
+        filter: Option<ResultFilter>,
     ) -> Result<Vec<ComparisonResult>, anyhow::Error> {
         // Utilize the provided filters on local_attestations
-        let locals = match self.local_attestations(ctx, deployment, block).await {
+        let locals: Vec<AttestationEntry> = match self
+            .local_attestations(ctx, deployment.clone(), block)
+            .await
+        {
             Ok(r) => r,
             Err(e) => return Err(e),
-        };
+        }
+        .into_iter()
+        .filter(|entry| filter_attestations(entry, &deployment.clone(), &block))
+        .collect::<Vec<AttestationEntry>>();
 
         let mut res = vec![];
         for entry in locals {
@@ -76,8 +87,12 @@ impl QueryRoot {
                 .comparison_result(ctx, entry.deployment, entry.block_number)
                 .await;
             // Return err if just one has err? (ignored for now)
-            if r.is_ok() {
-                res.push(r.unwrap());
+            if r.is_err() {
+                continue;
+            }
+            let result = r.unwrap();
+            if filter_results(&result, &filter) {
+                res.push(result);
             }
         }
 
@@ -144,6 +159,87 @@ impl QueryRoot {
 
         Ok(comparison_result)
     }
+
+    /// Return the sender ratio for remote attestations, with a "!" for the attestation matching local
+    async fn sender_ratio(
+        &self,
+        ctx: &Context<'_>,
+        deployment: Option<String>,
+        block: Option<u64>,
+        filter: Option<ResultFilter>,
+    ) -> Result<Vec<CompareRatio>, anyhow::Error> {
+        let res = self
+            .comparison_results(ctx, deployment, block, filter)
+            .await?;
+        let mut ratios = vec![];
+        for r in res {
+            let ratio =
+                sender_count_str(&r.attestations, r.local_attestation.unwrap().npoi.clone());
+            ratios.push(CompareRatio::new(r.deployment, r.block_number, ratio));
+        }
+        Ok(ratios)
+    }
+
+    /// Return the stake weight for remote attestations, with a "!" for the attestation matching local
+    async fn stake_ratio(
+        &self,
+        ctx: &Context<'_>,
+        deployment: Option<String>,
+        block: Option<u64>,
+        filter: Option<ResultFilter>,
+    ) -> Result<Vec<CompareRatio>, anyhow::Error> {
+        let res = self
+            .comparison_results(ctx, deployment, block, filter)
+            .await?;
+        let mut ratios = vec![];
+        for r in res {
+            let ratio =
+                stake_weight_str(&r.attestations, r.local_attestation.unwrap().npoi.clone());
+            ratios.push(CompareRatio::new(r.deployment, r.block_number, ratio));
+        }
+        Ok(ratios)
+    }
+}
+
+/// Helper function to order attestations by stake weight and then find the number of unique senders
+pub fn sender_count_str(attestations: &[Attestation], local_npoi: String) -> String {
+    // Create a HashMap to store the attestation and senders
+    let mut temp_attestations = attestations.to_owned();
+    let mut output = String::new();
+
+    // Sort the attestations by descending stake weight
+    temp_attestations.sort_by(|a, b| b.stake_weight.cmp(&a.stake_weight));
+    // Iterate through the attestations and populate the maps
+    // No set is needed since uniqueness is garuanteeded by validation
+    for att in attestations.iter() {
+        let separator = if att.npoi == local_npoi { "!/" } else { "/" };
+
+        output.push_str(&format!("{}{}", att.senders.len(), separator));
+    }
+
+    output.pop(); // Remove the trailing '/'
+
+    output
+}
+
+/// Helper function to order attestations by stake weight and then find the number of unique senders
+pub fn stake_weight_str(attestations: &[Attestation], local_npoi: String) -> String {
+    // Create a HashMap to store the attestation and senders
+    let mut temp_attestations = attestations.to_owned();
+    let mut output = String::new();
+
+    // Sort the attestations by descending stake weight
+    temp_attestations.sort_by(|a, b| b.stake_weight.cmp(&a.stake_weight));
+    // Iterate through the attestations and populate the maps
+    // No set is needed since uniqueness is garuanteeded by validation
+    for att in attestations.iter() {
+        let separator = if att.npoi == local_npoi { "!/" } else { "/" };
+        output.push_str(&format!("{}{}", att.stake_weight, separator));
+    }
+
+    output.pop(); // Remove the trailing '/'
+
+    output
 }
 
 pub async fn build_schema(ctx: Arc<POIRadioContext>) -> POIRadioSchema {
@@ -167,7 +263,11 @@ impl POIRadioContext {
 }
 
 /// Filter funciton for Attestations on deployment and block
-fn filter_fn(entry: &AttestationEntry, identifier: &Option<String>, block: &Option<u64>) -> bool {
+fn filter_attestations(
+    entry: &AttestationEntry,
+    identifier: &Option<String>,
+    block: &Option<u64>,
+) -> bool {
     let is_matching_deployment = match identifier {
         Some(dep) => entry.deployment == dep.clone(),
         None => true, // Skip check
@@ -177,4 +277,50 @@ fn filter_fn(entry: &AttestationEntry, identifier: &Option<String>, block: &Opti
         None => true, // Skip check
     };
     is_matching_deployment && is_matching_block
+}
+
+fn filter_results(entry: &ComparisonResult, filter: &Option<ResultFilter>) -> bool {
+    let (identifier, block, result): (Option<String>, Option<u64>, Option<ComparisonResultType>) =
+        match filter {
+            None => (None, None, None),
+            Some(f) => (f.deployment.clone(), f.block_number, f.result_type),
+        };
+
+    let is_matching_deployment = match identifier {
+        Some(dep) => entry.deployment == dep,
+        None => true, // Skip check
+    };
+    let is_matching_block = match block {
+        Some(b) => entry.block_number == b,
+        None => true, // Skip check
+    };
+    let is_matching_result_type = match result {
+        Some(r) => entry.result_type == r,
+        None => true, // Skip check
+    };
+    is_matching_deployment && is_matching_block && is_matching_result_type
+}
+
+#[derive(InputObject)]
+struct ResultFilter {
+    deployment: Option<String>,
+    block_number: Option<u64>,
+    result_type: Option<ComparisonResultType>,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, SimpleObject)]
+struct CompareRatio {
+    deployment: String,
+    block_number: u64,
+    compare_ratio: String,
+}
+
+impl CompareRatio {
+    fn new(deployment: String, block_number: u64, compare_ratio: String) -> Self {
+        CompareRatio {
+            deployment,
+            block_number,
+            compare_ratio,
+        }
+    }
 }

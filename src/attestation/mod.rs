@@ -21,7 +21,7 @@ use crate::{
     metrics::{
         ACTIVE_INDEXERS, DIVERGING_SUBGRAPHS, INDEXER_COUNT_BY_NPOI, LOCAL_NPOIS_TO_COMPARE,
     },
-    OperationError, RadioPayloadMessage, CONFIG,
+    OperationError, RadioPayloadMessage, CONFIG, MESSAGES,
 };
 
 /// A wrapper around an attested NPOI, tracks Indexers that have sent it plus their accumulated stake
@@ -655,7 +655,7 @@ pub async fn log_summary(
     DIVERGING_SUBGRAPHS.set(divergent_strings.len().try_into().unwrap());
 
     info!(
-        "Operation summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
+        "Operation summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
         "Chainhead blocks",
         blocks_str.clone(),
         "# of deployments tracked",
@@ -664,20 +664,22 @@ pub async fn log_summary(
         send_success.len(),
         "# of deployments waiting for next message interval",
         skip_repeated.len(),
-        "Deployments catching up to chainhead",
-        trigger_failed,
+        "# of deployments catching up to chainhead",
+        trigger_failed.len(),
         "Deployments failed to build message",
         build_errors,
+        "# of messages cached",
+        MESSAGES.get().unwrap().lock().unwrap().len(),
         "# of deployments actively cross-checked",
         match_strings.len() + divergent_strings.len(),
         "# of successful attestations",
         match_strings.len(),
-        "# of deployments without remote attestation",
+        "# of deployments without matching attestations",
         not_found_strings.len(),
+        "# of deployment waiting for comparison trigger",
+        cmp_trigger_failed.len(),
         "Divergence",
         divergent_strings,
-        "Compare trigger out of bound",
-        cmp_trigger_failed,
         "Attestation failed",
         attestation_failed,
         "Comparison failed",
