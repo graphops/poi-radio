@@ -9,7 +9,7 @@ name: CI
 jobs:
   check:
     name: Check
-    if: github.event.comment.body == "@test_pls" || github.event.review.state == 'approved'
+    if: github.event.review.state == 'approved'
     strategy:
       matrix:
         include:
