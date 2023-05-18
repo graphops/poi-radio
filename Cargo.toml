@@ -9,6 +9,7 @@ repository = "https://github.com/graphops/poi-radio"
 keywords = ["graphprotocol", "data-integrity", "Indexer", "waku", "p2p"]
 categories = ["network-programming", "web-programming::http-client"]
 default-run = "poi-radio"
+exclude = ["integration-tests/*"]
 
 [dependencies]
 graphcast-sdk = { git = "https://github.com/graphops/graphcast-sdk" }
@@ -19,9 +20,10 @@ serde = "1.0.163"
 serde_json = "1.0.96"
 sha3 = "0.10.8"
 tokio = { version = "1.28.1", features = ["full", "rt"] }
-anyhow = "1.0.71"
+# tokio = { version = "1.28", features = ["full", "tracing", "rt", "parking_lot"] }
+anyhow = "1.0"
 graphql_client = "0.9.0"
-serde_derive = "1.0.163"
+serde_derive = "1.0"
 reqwest = { version = "0.11.17", features = ["json"] }
 thiserror = "1.0.40"
 regex = "1.8.1"
@@ -51,13 +53,14 @@ opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }
 opentelemetry-jaeger = { version = "0.17.0", features = ["rt-tokio"] }
 tracing-opentelemetry = "0.18.0"
 clap = { version = "3.2.25", features = ["derive", "env"] }
+# console-subscriber = "0.1.9"
 
-[[bin]]
-name = "integration-tests"
-path = "integration-tests/src/main.rs"
+# [[bin]]
+# name = "integration-tests"
+# path = "integration-tests/src/main.rs"
 
 [dev-dependencies]
-criterion = {version = "0.4", features = [ "async", "async_futures" ]}
+criterion = { version = "0.4", features = ["async", "async_futures"] }
 rand = "0.8"
 
 [[bench]]

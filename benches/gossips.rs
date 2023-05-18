@@ -52,9 +52,10 @@ fn gossip_poi_bench(c: &mut Criterion) {
         metrics_port: None,
         server_host: None,
         server_port: None,
+        persistence_file_path: None,
     });
     _ = black_box(CONFIG.set(Arc::new(SyncMutex::new(config))));
-    _ = black_box(RADIO_NAME.set("bench-radio"));
+    _ = black_box(RADIO_NAME.set("bench-radio".to_string()));
 
     c.bench_function("gossip_poi", move |b| {
         b.to_async(FuturesExecutor).iter(|| async {

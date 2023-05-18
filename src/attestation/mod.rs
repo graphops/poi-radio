@@ -2,6 +2,7 @@ use async_graphql::{Enum, Error, ErrorExtensions, SimpleObject};
 use autometrics::autometrics;
 use chrono::Utc;
 use num_traits::Zero;
+use serde_derive::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::{
     collections::HashMap,
@@ -21,11 +22,11 @@ use crate::{
     metrics::{
         ACTIVE_INDEXERS, DIVERGING_SUBGRAPHS, INDEXER_COUNT_BY_NPOI, LOCAL_NPOIS_TO_COMPARE,
     },
-    OperationError, RadioPayloadMessage, CONFIG, MESSAGES,
+    OperationError, RadioPayloadMessage, CONFIG,
 };
 
 /// A wrapper around an attested NPOI, tracks Indexers that have sent it plus their accumulated stake
-#[derive(Clone, Debug, PartialEq, Eq, Hash, SimpleObject)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, SimpleObject, Serialize, Deserialize)]
 pub struct Attestation {
     pub npoi: String,
     pub stake_weight: i64,
@@ -133,9 +134,15 @@ pub async fn process_messages(
         let sender = msg
             .recover_sender_address()
             .map_err(AttestationError::BuildError)?;
+
+        trace!("Sender Graphcast ID address: {}", sender);
+
         let indexer_address = query_registry_indexer(registry_subgraph.to_string(), sender.clone())
             .await
             .map_err(|e| AttestationError::BuildError(BuildMessageError::FieldDerivations(e)))?;
+
+        trace!("Sender Indexer address: {}", indexer_address);
+
         let sender_stake = get_indexer_stake(indexer_address.clone(), network_subgraph)
             .await
             .map_err(|e| AttestationError::BuildError(BuildMessageError::FieldDerivations(e)))?;
@@ -292,7 +299,7 @@ pub async fn save_local_attestation(
 
 /// Clear the expired local attestations after comparing with remote results
 pub async fn clear_local_attestation(
-    local_attestations: Arc<AsyncMutex<LocalAttestationsMap>>,
+    local_attestations: Arc<AsyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
     ipfs_hash: String,
     block_number: u64,
 ) {
@@ -309,6 +316,14 @@ pub async fn clear_local_attestation(
         local_attestations.insert(ipfs_hash.clone(), blocks_clone);
     };
 }
+
+//TODO: add as a function of global state
+// /// Clear the expired local attestations after comparing with remote results
+// pub async fn clear_local_attestations(local_attestations: Arc<AsyncMutex<LocalAttestationsMap>>,
+// ) {
+
+//     _ = local_attestations.set(Arc::new(AsyncMutex::new(HashMap::new())));
+// }
 
 /// Tracks results indexed by deployment hash and block number
 #[derive(Enum, Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -574,24 +589,12 @@ fn hash_addresses(addresses: &[String]) -> String {
 
 /// This function logs the operational summary of the main event loop
 #[allow(clippy::too_many_arguments)]
-pub async fn log_summary(
+pub async fn log_gossip_summary(
     blocks_str: String,
     num_topics: usize,
     messages_sent: Vec<Result<String, OperationError>>,
-    result_strings: Vec<Result<ComparisonResult, OperationError>>,
-    radio_name: &str,
 ) {
-    let slack_token = CONFIG.get().unwrap().lock().unwrap().slack_token.clone();
-    let slack_channel = CONFIG.get().unwrap().lock().unwrap().slack_channel.clone();
-    let discord_webhook = CONFIG
-        .get()
-        .unwrap()
-        .lock()
-        .unwrap()
-        .discord_webhook
-        .clone();
-
-    // Generate send summary
+    // Generate gossip summary
     let mut send_success = vec![];
     let mut trigger_failed = vec![];
     let mut skip_repeated = vec![];
@@ -604,6 +607,41 @@ pub async fn log_summary(
             Err(e) => build_errors.push(e),
         }
     }
+
+    info!(
+        "Gossip events summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
+        "Chainhead blocks",
+        blocks_str,
+        "# of deployments tracked",
+        num_topics,
+        "# of deployment updates sent",
+        send_success.len(),
+        "# of deployments waiting for next message interval",
+        skip_repeated.len(),
+        "Deployments catching up to chainhead",
+        trigger_failed,
+        "Deployments failed to build message",
+        build_errors,
+    );
+}
+
+/// This function logs the operational summary of the main event loop
+#[allow(clippy::too_many_arguments)]
+pub async fn log_comparison_summary(
+    blocks_str: String,
+    num_topics: usize,
+    result_strings: Vec<Result<ComparisonResult, OperationError>>,
+    radio_name: &str,
+) {
+    let slack_token = CONFIG.get().unwrap().lock().unwrap().slack_token.clone();
+    let slack_channel = CONFIG.get().unwrap().lock().unwrap().slack_channel.clone();
+    let discord_webhook = CONFIG
+        .get()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .discord_webhook
+        .clone();
 
     // Generate attestation summary
     let mut match_strings = vec![];
@@ -655,31 +693,21 @@ pub async fn log_summary(
     DIVERGING_SUBGRAPHS.set(divergent_strings.len().try_into().unwrap());
 
     info!(
-        "Operation summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
+        "Comparison summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
         "Chainhead blocks",
         blocks_str.clone(),
         "# of deployments tracked",
         num_topics,
-        "# of deployment updates sent",
-        send_success.len(),
-        "# of deployments waiting for next message interval",
-        skip_repeated.len(),
-        "# of deployments catching up to chainhead",
-        trigger_failed.len(),
-        "Deployments failed to build message",
-        build_errors,
-        "# of messages cached",
-        MESSAGES.get().unwrap().lock().unwrap().len(),
         "# of deployments actively cross-checked",
         match_strings.len() + divergent_strings.len(),
         "# of successful attestations",
         match_strings.len(),
-        "# of deployments without matching attestations",
+        "# of deployments without remote attestation",
         not_found_strings.len(),
-        "# of deployment waiting for comparison trigger",
-        cmp_trigger_failed.len(),
         "Divergence",
         divergent_strings,
+        "Compare trigger out of bound",
+        cmp_trigger_failed,
         "Attestation failed",
         attestation_failed,
         "Comparison failed",
@@ -704,6 +732,8 @@ impl ErrorExtensions for AttestationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // TODO: add setup and teardown functions
 
     #[test]
     fn test_update_blocks() {
@@ -1054,5 +1084,49 @@ mod tests {
 
         assert_eq!(block_num, 42);
         assert_eq!(collect_window_end, 122);
+    }
+
+    #[tokio::test]
+    async fn test_save_local_attestation() {
+        let local_attestations = Arc::new(AsyncMutex::new(HashMap::new()));
+        save_local_attestation(
+            local_attestations.clone(),
+            "npoi-x".to_string(),
+            "0xa1".to_string(),
+            0,
+        )
+        .await;
+
+        save_local_attestation(
+            local_attestations.clone(),
+            "npoi-y".to_string(),
+            "0xa1".to_string(),
+            1,
+        )
+        .await;
+
+        save_local_attestation(
+            local_attestations.clone(),
+            "npoi-z".to_string(),
+            "0xa2".to_string(),
+            2,
+        )
+        .await;
+
+        assert!(!local_attestations.lock().await.is_empty());
+        assert!(local_attestations.lock().await.len() == 2);
+        assert!(local_attestations.lock().await.get("0xa1").unwrap().len() == 2);
+        assert!(local_attestations.lock().await.get("0xa2").unwrap().len() == 1);
+        assert!(
+            local_attestations
+                .lock()
+                .await
+                .get("0xa1")
+                .unwrap()
+                .get(&0)
+                .unwrap()
+                .npoi
+                == *"npoi-x"
+        );
     }
 }

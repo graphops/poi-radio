@@ -223,6 +223,13 @@ pub struct Config {
         env = "SERVER_PORT"
     )]
     pub server_port: Option<u16>,
+    #[clap(
+        long,
+        value_name = "PERSISTENCE_FILE_PATH",
+        help = "If set, the Radio will periodically store states of the program to the file in json format",
+        env = "PERSISTENCE_FILE_PATH"
+    )]
+    pub persistence_file_path: Option<String>,
 }
 
 impl Config {
