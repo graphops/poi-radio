@@ -45,13 +45,12 @@ fn gossip_poi_bench(c: &mut Criterion) {
         log_level: String::from("info"),
         slack_token: None,
         slack_channel: None,
-        instance: None,
-        check: None,
         discord_webhook: None,
         metrics_host: None,
         metrics_port: None,
         server_host: None,
         server_port: None,
+        log_format: String::from("pretty"),
     });
     _ = black_box(CONFIG.set(Arc::new(SyncMutex::new(config))));
 

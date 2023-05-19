@@ -17,12 +17,6 @@ To run unit tests for the Radio. We recommend using [nextest](https://nexte.st/)
 cargo nextest run
 ```
 
-There's also integration tests, which you can run with the included bash script:
-
-```
-sh run-tests.sh
-```
-
 ## Contributing
 
 We welcome and appreciate your contributions! Please see the [Contributor Guide](/CONTRIBUTING.md), [Code Of Conduct](/CODE_OF_CONDUCT.md) and [Security Notes](/SECURITY.md) for this repository.

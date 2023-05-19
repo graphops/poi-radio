@@ -175,27 +175,6 @@ pub struct Config {
     pub slack_channel: Option<String>,
     #[clap(
         long,
-        value_name = "INSTANCE",
-        // Basic instance runs with default configs, invalid_payload sends a malformed message, divergent sends an unexpected nPOI value
-        possible_values = &["basic", "invalid_payload", "divergent", "invalid_hash", "invalid_nonce"],
-        help = "Instance to run (integration tests)"
-    )]
-    pub instance: Option<String>,
-    #[clap(
-        long,
-        value_name = "CHECK",
-        possible_values = &[
-            "simple_tests",
-            "invalid_sender",
-            "poi_divergence_remote",
-            "poi_divergence_local",
-            "invalid_messages"
-        ],
-        help = "Check to run (integration tests)"
-    )]
-    pub check: Option<String>,
-    #[clap(
-        long,
         value_name = "DISCORD_WEBHOOK",
         help = "Discord webhook URL to send messages to",
         env = "DISCORD_WEBHOOK"
@@ -229,6 +208,16 @@ pub struct Config {
         env = "SERVER_PORT"
     )]
     pub server_port: Option<u16>,
+    #[clap(
+        long,
+        value_name = "LOG_FORMAT",
+        env = "LOG_FORMAT",
+        help = "Support logging formats: pretty, json, full, compact",
+        long_help = "pretty: verbose and human readable; json: not verbose and parsable; compact:  not verbose and not parsable; full: verbose and not parsible",
+        possible_values = ["pretty", "json", "full", "compact"],
+        default_value = "pretty"
+    )]
+    pub log_format: String,
 }
 
 impl Config {
@@ -238,7 +227,7 @@ impl Config {
         let config = Config::parse();
         std::env::set_var("RUST_LOG", config.log_level.clone());
         // Enables tracing under RUST_LOG variable
-        init_tracing().expect("Could not set up global default subscriber for logger, check environmental variable `RUST_LOG` or the CLI input `log-level`");
+        init_tracing(config.log_format.clone()).expect("Could not set up global default subscriber for logger, check environmental variable `RUST_LOG` or the CLI input `log-level`");
         config
     }
 
