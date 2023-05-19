@@ -1,4 +1,5 @@
 use async_graphql::{Error, ErrorExtensions, SimpleObject};
+
 use autometrics::autometrics;
 use config::{Config, CoverageLevel};
 use ethers_contract::EthAbiType;
@@ -38,6 +39,7 @@ pub mod graphql;
 pub mod metrics;
 pub mod operation;
 pub mod server;
+pub mod state;
 
 pub type MessagesVec = OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>>;
 
@@ -269,6 +271,10 @@ impl ErrorExtensions for OperationError {
     fn extend(&self) -> Error {
         Error::new(format!("{}", self))
     }
+}
+
+pub fn clear_all_messages() {
+    _ = MESSAGES.set(Arc::new(SyncMutex::new(vec![])));
 }
 
 #[cfg(test)]

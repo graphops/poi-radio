@@ -51,6 +51,7 @@ fn gossip_poi_bench(c: &mut Criterion) {
         server_host: None,
         server_port: None,
         log_format: String::from("pretty"),
+        persistence_file_path: None,
     });
     _ = black_box(CONFIG.set(Arc::new(SyncMutex::new(config))));
 

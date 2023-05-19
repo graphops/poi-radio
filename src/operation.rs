@@ -222,7 +222,6 @@ pub async fn message_comparison(
         .filter(|&m| m.block_number == compare_block && m.nonce <= collect_window_end)
         .cloned()
         .collect();
-
     debug!(
         "Comparing validated and filtered messages:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}",
         "Deployment",
@@ -335,7 +334,6 @@ pub async fn compare_poi(
             .unwrap()
             .collect_message_duration;
         let id_cloned = id.clone();
-
         let registry_subgraph = CONFIG
             .get()
             .unwrap()

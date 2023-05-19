@@ -1,6 +1,6 @@
 use dotenv::dotenv;
 use poi_radio::attestation::{log_comparison_summary, log_gossip_summary};
-
+use poi_radio::state::PersistedState;
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -65,9 +65,20 @@ async fn main() {
 
     // Initialize program state
     _ = CONFIG.set(Arc::new(SyncMutex::new(radio_config.clone())));
-    _ = MESSAGES.set(Arc::new(SyncMutex::new(vec![])));
+    let file_path = &radio_config.persistence_file_path.clone();
+    let state = if let Some(path) = file_path {
+        //TODO: set up synchronous panic hook as part of PersistedState functions
+        // panic_hook(&path);
+        let state = PersistedState::load_cache(path);
+        debug!("Loaded Persisted state cache: {:#?}", state);
+        state
+    } else {
+        debug!("Created new state without persistence");
+        PersistedState::new(None, None)
+    };
+    _ = MESSAGES.set(state.remote_messages());
     let local_attestations: Arc<AsyncMutex<LocalAttestationsMap>> =
-        Arc::new(AsyncMutex::new(HashMap::new()));
+        Arc::new(AsyncMutex::new(state.local_attestations()));
 
     let (my_address, _) = radio_config.basic_info().await.unwrap();
     let topic_coverage = radio_config.coverage.clone();
@@ -99,11 +110,9 @@ async fn main() {
     let skip_iteration_clone = skip_iteration.clone();
 
     let mut topic_update_interval = interval(Duration::from_secs(600));
-    let mut gossip_poi_interval = interval(Duration::from_secs(3));
-    let mut comparison_interval = interval(Duration::from_secs(6));
-    // TODO: change back to 30 and 60
-    // let mut gossip_poi_interval = interval(Duration::from_secs(30));
-    // let mut comparison_interval = interval(Duration::from_secs(60));
+    let mut state_update_interval = interval(Duration::from_secs(15));
+    let mut gossip_poi_interval = interval(Duration::from_secs(30));
+    let mut comparison_interval = interval(Duration::from_secs(60));
 
     let iteration_timeout = Duration::from_secs(180);
     let update_timeout = Duration::from_secs(10);
@@ -144,6 +153,28 @@ async fn main() {
                     debug!("update_content_topics completed");
                 }
             },
+            _ = state_update_interval.tick() => {
+                if skip_iteration.load(Ordering::SeqCst) {
+                    skip_iteration.store(false, Ordering::SeqCst);
+                    continue;
+                }
+                // TODO: make operator struct that keeps the global state
+                // Update the state to persist
+                let result = timeout(update_timeout,
+                    state.update(Some(local_attestations.clone()), Some(MESSAGES.get().unwrap().clone()))
+                ).await;
+
+                if let Ok(r) = result {
+                    debug!("state update completed");
+
+                    // Save cache if path provided
+                    if let Some(path) = file_path {
+                        r.update_cache(path);
+                    }
+                } else {
+                    warn!("state update timed out");
+                }
+            },
             _ = gossip_poi_interval.tick() => {
                 if skip_iteration.load(Ordering::SeqCst) {
                     skip_iteration.store(false, Ordering::SeqCst);
@@ -153,8 +184,6 @@ async fn main() {
                 let result = timeout(gossip_timeout, {
                     let network_chainhead_blocks: Arc<AsyncMutex<HashMap<NetworkName, BlockPointer>>> =
                         Arc::new(AsyncMutex::new(HashMap::new()));
-                    let local_attestations = Arc::clone(&local_attestations);
-
                     // Update all the chainheads of the network
                     // Also get a hash map returned on the subgraph mapped to network name and latest block
                     let graph_node = CONFIG

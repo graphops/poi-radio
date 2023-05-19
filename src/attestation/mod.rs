@@ -2,6 +2,7 @@ use async_graphql::{Enum, Error, ErrorExtensions, SimpleObject};
 use autometrics::autometrics;
 use chrono::Utc;
 use num_traits::Zero;
+use serde_derive::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::{
     collections::HashMap,
@@ -25,7 +26,7 @@ use crate::{
 };
 
 /// A wrapper around an attested NPOI, tracks Indexers that have sent it plus their accumulated stake
-#[derive(Clone, Debug, PartialEq, Eq, Hash, SimpleObject)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, SimpleObject, Serialize, Deserialize)]
 pub struct Attestation {
     pub npoi: String,
     pub stake_weight: i64,
@@ -292,7 +293,7 @@ pub async fn save_local_attestation(
 
 /// Clear the expired local attestations after comparing with remote results
 pub async fn clear_local_attestation(
-    local_attestations: Arc<AsyncMutex<LocalAttestationsMap>>,
+    local_attestations: Arc<AsyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
     ipfs_hash: String,
     block_number: u64,
 ) {
@@ -309,6 +310,14 @@ pub async fn clear_local_attestation(
         local_attestations.insert(ipfs_hash.clone(), blocks_clone);
     };
 }
+
+//TODO: add as a function of global state
+// /// Clear the expired local attestations after comparing with remote results
+// pub async fn clear_local_attestations(local_attestations: Arc<AsyncMutex<LocalAttestationsMap>>,
+// ) {
+
+//     _ = local_attestations.set(Arc::new(AsyncMutex::new(HashMap::new())));
+// }
 
 /// Tracks results indexed by deployment hash and block number
 #[derive(Enum, Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -717,6 +726,8 @@ impl ErrorExtensions for AttestationError {
 mod tests {
     use super::*;
 
+    // TODO: add setup and teardown functions
+
     #[test]
     fn test_update_blocks() {
         let mut blocks: HashMap<u64, Vec<Attestation>> = HashMap::new();
@@ -1066,5 +1077,49 @@ mod tests {
 
         assert_eq!(block_num, 42);
         assert_eq!(collect_window_end, 122);
+    }
+
+    #[tokio::test]
+    async fn test_save_local_attestation() {
+        let local_attestations = Arc::new(AsyncMutex::new(HashMap::new()));
+        save_local_attestation(
+            local_attestations.clone(),
+            "npoi-x".to_string(),
+            "0xa1".to_string(),
+            0,
+        )
+        .await;
+
+        save_local_attestation(
+            local_attestations.clone(),
+            "npoi-y".to_string(),
+            "0xa1".to_string(),
+            1,
+        )
+        .await;
+
+        save_local_attestation(
+            local_attestations.clone(),
+            "npoi-z".to_string(),
+            "0xa2".to_string(),
+            2,
+        )
+        .await;
+
+        assert!(!local_attestations.lock().await.is_empty());
+        assert!(local_attestations.lock().await.len() == 2);
+        assert!(local_attestations.lock().await.get("0xa1").unwrap().len() == 2);
+        assert!(local_attestations.lock().await.get("0xa2").unwrap().len() == 1);
+        assert!(
+            local_attestations
+                .lock()
+                .await
+                .get("0xa1")
+                .unwrap()
+                .get(&0)
+                .unwrap()
+                .npoi
+                == *"npoi-x"
+        );
     }
 }
