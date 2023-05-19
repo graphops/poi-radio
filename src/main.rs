@@ -1,6 +1,4 @@
 use dotenv::dotenv;
-use poi_radio::attestation::{log_comparison_summary, log_gossip_summary};
-use poi_radio::state::PersistedState;
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -20,9 +18,8 @@ use graphcast_sdk::{
     networks::NetworkName,
     BlockPointer,
 };
-
 use poi_radio::{
-    attestation::LocalAttestationsMap,
+    attestation::{log_comparison_summary, log_gossip_summary, LocalAttestationsMap},
     chainhead_block_str,
     config::Config,
     generate_topics,
@@ -65,17 +62,7 @@ async fn main() {
 
     // Initialize program state
     _ = CONFIG.set(Arc::new(SyncMutex::new(radio_config.clone())));
-    let file_path = &radio_config.persistence_file_path.clone();
-    let state = if let Some(path) = file_path {
-        //TODO: set up synchronous panic hook as part of PersistedState functions
-        // panic_hook(&path);
-        let state = PersistedState::load_cache(path);
-        debug!("Loaded Persisted state cache: {:#?}", state);
-        state
-    } else {
-        debug!("Created new state without persistence");
-        PersistedState::new(None, None)
-    };
+    let state = radio_config.init_radio_state().await;
     _ = MESSAGES.set(state.remote_messages());
     let local_attestations: Arc<AsyncMutex<LocalAttestationsMap>> =
         Arc::new(AsyncMutex::new(state.local_attestations()));
@@ -88,8 +75,8 @@ async fn main() {
     let generate_topics = partial!(generate_topics => topic_coverage.clone(), topic_network.clone(), my_address.clone(), topic_graph_node.clone(), topic_static);
     let topics = generate_topics().await;
     debug!(
-        "Found content topics for subscription: {:?}",
-        topics.clone()
+        topics = tracing::field::debug(&topics),
+        "Found content topics for subscription",
     );
     GRAPHCAST_AGENT
         .get()
@@ -168,7 +155,7 @@ async fn main() {
                     debug!("state update completed");
 
                     // Save cache if path provided
-                    if let Some(path) = file_path {
+                    if let Some(path) = &radio_config.persistence_file_path.clone() {
                         r.update_cache(path);
                     }
                 } else {
@@ -199,14 +186,14 @@ async fn main() {
                         {
                             Ok(res) => res,
                             Err(e) => {
-                                error!("Could not query indexing statuses, pull again later: {e}");
+                                error!(err = tracing::field::debug(&e), "Could not query indexing statuses, pull again later");
                                 continue;
                             }
                         };
 
                     trace!(
-                        "Subgraph network and latest blocks: {:#?}",
-                        subgraph_network_latest_blocks,
+                        network_pointers = tracing::field::debug(&subgraph_network_latest_blocks),
+                        "Subgraph network and latest blocks",
                     );
 
                     // Radio specific message content query function
@@ -217,13 +204,10 @@ async fn main() {
                     let num_topics = identifiers.len();
                     let blocks_str = chainhead_block_str(&*network_chainhead_blocks.lock().await);
                     info!(
-                        "Network statuses:\n{}: {:#?}\n{}: {:#?}\n{}: {}",
-                        "Chainhead blocks",
-                        blocks_str.clone(),
-                        "Number of gossip peers",
-                        GRAPHCAST_AGENT.get().unwrap().number_of_peers(),
-                        "Number of tracked deployments (topics)",
+                        chainhead = blocks_str.clone(),
+                        num_gossip_peers = GRAPHCAST_AGENT.get().unwrap().number_of_peers(),
                         num_topics,
+                        "Network statuses",
                     );
 
                     let send_ops = gossip_poi(
@@ -269,7 +253,7 @@ async fn main() {
                     let indexing_status = match get_indexing_statuses(graph_node_endpoint.clone()).await {
                         Ok(res) => res,
                         Err(e) => {
-                            error!("Could not query indexing statuses, pull again later: {e}");
+                            error!(err = tracing::field::debug(&e), "Could not query indexing statuses, pull again later");
                             continue;
                         }
                     };

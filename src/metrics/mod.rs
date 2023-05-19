@@ -8,7 +8,7 @@ use prometheus::{
     linear_buckets, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, Opts,
 };
 use std::{net::SocketAddr, str::FromStr};
-use tracing::info;
+use tracing::{debug, info};
 
 // Received (and validated) messages counter
 #[allow(dead_code)]
@@ -118,7 +118,7 @@ pub static REGISTRY: Lazy<prometheus::Registry> = Lazy::new(prometheus::Registry
 pub fn register_metrics(registry: &Registry, metrics: Vec<Box<dyn Collector>>) {
     for metric in metrics {
         registry.register(metric).expect("Cannot register metrics");
-        info!("registered");
+        debug!("registered metric");
     }
 }
 
@@ -156,7 +156,10 @@ pub async fn handle_serve_metrics(host: String, port: u16) {
     let addr =
         SocketAddr::from_str(&format!("{}:{}", host, port)).expect("Start Prometheus metrics");
     let server = axum::Server::bind(&addr);
-    info!("Metrics exposed at {}", addr.to_string());
+    info!(
+        address = addr.to_string(),
+        "Prometheus Metrics port exposed"
+    );
 
     server
         .serve(app.into_make_service())

@@ -91,7 +91,7 @@ impl PersistedState {
         let file = match File::open(path) {
             Ok(f) => f,
             Err(_) => {
-                warn!("Could not find persisted state file, create a state");
+                warn!("No persisted state file provided, create an empty state");
                 // No state persisted, create new
                 return PersistedState::new(None, None);
             }
@@ -103,8 +103,8 @@ impl PersistedState {
             Err(e) => {
                 // Persisted state can't be parsed, create a new one
                 warn!(
-                    "Could not find persisted state file, created a new state: {}",
-                    e.to_string()
+                    err = e.to_string(),
+                    "Could not parse persisted state file, created an empty state",
                 );
                 PersistedState::new(None, None)
             }

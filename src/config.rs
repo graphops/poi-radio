@@ -1,18 +1,19 @@
 use clap::Parser;
 use ethers::signers::WalletError;
-use graphcast_sdk::build_wallet;
-use graphcast_sdk::graphcast_agent::GraphcastAgent;
-use graphcast_sdk::graphcast_agent::GraphcastAgentConfig;
-use graphcast_sdk::graphcast_agent::GraphcastAgentError;
-use graphcast_sdk::graphcast_id_address;
-use graphcast_sdk::graphql::client_network::query_network_subgraph;
-use graphcast_sdk::graphql::client_registry::query_registry_indexer;
-use graphcast_sdk::graphql::QueryError;
-use graphcast_sdk::init_tracing;
+use graphcast_sdk::{
+    build_wallet,
+    graphcast_agent::{GraphcastAgent, GraphcastAgentConfig, GraphcastAgentError},
+    graphcast_id_address,
+    graphql::{
+        client_network::query_network_subgraph, client_registry::query_registry_indexer, QueryError,
+    },
+    init_tracing,
+};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::radio_name;
+use crate::state::PersistedState;
 
 #[derive(clap::ValueEnum, Clone, Debug, Serialize, Deserialize)]
 pub enum CoverageLevel {
@@ -242,8 +243,8 @@ impl Config {
     fn parse_key(value: &str) -> Result<String, WalletError> {
         // The wallet can be stored instead of the original private key
         let wallet = build_wallet(value)?;
-        let addr = graphcast_id_address(&wallet);
-        info!("Resolved Graphcast id: {}", addr);
+        let address = graphcast_id_address(&wallet);
+        info!(address, "Resolved Graphcast id");
         Ok(String::from(value))
     }
 
@@ -299,11 +300,28 @@ impl Config {
                 .unwrap()
                 .indexer_stake();
         info!(
-            "Initializing radio to act on behalf of indexer {:#?} with stake {}",
-            my_address.clone(),
-            my_stake
+            my_address,
+            my_stake, "Initializing radio operator for indexer identity",
         );
         Ok((my_address, my_stake))
+    }
+
+    pub async fn init_radio_state(&self) -> PersistedState {
+        let file_path = &self.persistence_file_path.clone();
+
+        if let Some(path) = file_path {
+            //TODO: set up synchronous panic hook as part of PersistedState functions
+            // panic_hook(&path);
+            let state = PersistedState::load_cache(path);
+            debug!(
+                state = tracing::field::debug(&state),
+                "Loaded Persisted state cache"
+            );
+            state
+        } else {
+            debug!("Created new state");
+            PersistedState::new(None, None)
+        }
     }
 
     pub async fn create_graphcast_agent(&self) -> Result<GraphcastAgent, GraphcastAgentError> {

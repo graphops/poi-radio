@@ -97,7 +97,7 @@ pub fn radio_msg_handler(
     |msg: Result<GraphcastMessage<RadioPayloadMessage>, WakuHandlingError>| {
         // TODO: Handle the error case by incrementing a Prometheus "error" counter
         if let Ok(msg) = msg {
-            trace!("Received message: {:?}", msg);
+            trace!(msg = tracing::field::debug(&msg), "Received message");
             let id = msg.identifier.clone();
             VALIDATED_MESSAGES.with_label_values(&[&id]).inc();
             MESSAGES.get().unwrap().lock().unwrap().push(msg);
@@ -126,7 +126,7 @@ pub async fn active_allocation_hashes(
         .await
         .map(|result| result.indexer_allocations())
         .unwrap_or_else(|e| {
-            error!("Topic generation error: {}", e);
+            error!(err = tracing::field::debug(&e), "Failed to generate topics");
             vec![]
         })
 }
@@ -140,7 +140,7 @@ pub async fn syncing_deployment_hashes(
     get_indexing_statuses(graph_node_endpoint.to_string())
         .await
         .map_err(|e| -> Vec<String> {
-            error!("Topic generation error: {}", e);
+            error!(err = tracing::field::debug(&e), "Topic generation error");
             [].to_vec()
         })
         .unwrap()

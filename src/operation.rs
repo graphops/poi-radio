@@ -4,8 +4,7 @@ use std::cmp::max;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
-use tracing::log::warn;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
 
 use graphcast_sdk::{
     determine_message_block,
@@ -44,7 +43,10 @@ pub async fn gossip_set_up(
         ),
         None => {
             let err_msg = format!("Could not query the subgraph's indexing network, check Graph node's indexing statuses of subgraph deployment {}", id.clone());
-            warn!("{}", err_msg);
+            warn!(
+                err = tracing::field::debug(&err_msg),
+                "Failed to build message"
+            );
             return Err(BuildMessageError::Network(NetworkBlockError::FailedStatus(
                 err_msg,
             )));
@@ -58,24 +60,18 @@ pub async fn gossip_set_up(
         };
 
     debug!(
-        "Deployment status:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}",
-        "IPFS Hash",
-        id.clone(),
-        "Network",
-        network_name,
-        "Send message block",
-        message_block,
-        "Subgraph latest block",
-        latest_block.number,
-        "Send message block countdown (blocks)",
-        max(0, message_block as i64 - latest_block.number as i64),
-        "Repeated message, skip sending",
-        local_attestations
+        deployment_hash = tracing::field::debug(&id),
+        network = tracing::field::debug(&network_name),
+        message_block = message_block,
+        latest_block = latest_block.number,
+        message_countdown_blocks = max(0, message_block as i64 - latest_block.number as i64),
+        topics_waiting_for_next_message_interval = local_attestations
             .lock()
             .await
             .get(&id.clone())
             .and_then(|blocks| blocks.get(&message_block))
             .is_some(),
+        "Deployment status",
     );
 
     Ok((network_name, latest_block, message_block))
@@ -92,8 +88,9 @@ pub async fn message_send(
     graphcast_agent: &GraphcastAgent,
 ) -> Result<String, OperationError> {
     trace!(
-        "Checking latest block number and the message block: {0} >?= {message_block}",
-        latest_block.number
+        message_block = message_block,
+        latest_block = latest_block.number,
+        "Check message send requirement",
     );
 
     // Deployment did not sync to message_block
@@ -104,7 +101,7 @@ pub async fn message_send(
             id.clone(),
             latest_block.number, message_block,
         );
-        trace!("{}", err_msg);
+        trace!(err = err_msg, "Skip send",);
         return Err(OperationError::SendTrigger(err_msg));
     };
 
@@ -121,7 +118,7 @@ pub async fn message_send(
             id.clone(),
             message_block
         );
-        trace!("{}", err_msg);
+        trace!(err = err_msg, "Skip send");
         return Err(OperationError::SkipDuplicate(err_msg));
     }
 
@@ -132,7 +129,7 @@ pub async fn message_send(
         Ok(hash) => hash,
         Err(e) => {
             let err_msg = format!("Failed to query graph node for the block hash: {e}");
-            error!("{}", err_msg);
+            error!(err = err_msg, "Failed to send message");
             return Err(OperationError::Agent(e));
         }
     };
@@ -162,13 +159,16 @@ pub async fn message_send(
                     Ok(msg_id)
                 }
                 Err(e) => {
-                    error!("{}: {}", "Failed to send message", e);
+                    error!(err = tracing::field::debug(&e), "Failed to send message");
                     Err(OperationError::Agent(e))
                 }
             }
         }
         Err(e) => {
-            error!("{}: {}", "Failed to query message content", e);
+            error!(
+                err = tracing::field::debug(&e),
+                "Failed to query message content"
+            );
             Err(OperationError::Agent(
                 GraphcastAgentError::QueryResponseError(e),
             ))
@@ -199,7 +199,7 @@ pub async fn message_comparison(
         Some((block, window)) if time >= window => (block, window),
         Some((compare_block, window)) => {
             let err_msg = format!("Deployment {} comparison not triggered: collecting messages until time {}; currently {time}", id.clone(), window);
-            debug!("{}", err_msg);
+            debug!(err = err_msg, "Collecting messages",);
             return Err(OperationError::CompareTrigger(
                 id.clone(),
                 compare_block,
@@ -211,7 +211,7 @@ pub async fn message_comparison(
                 "Deployment {} comparison not triggered: no matching attestation to compare",
                 id.clone()
             );
-            debug!("{}", err_msg);
+            debug!(err = err_msg, "No matching attestations",);
             return Err(OperationError::CompareTrigger(id.clone(), 0, err_msg));
         }
     };
@@ -223,35 +223,25 @@ pub async fn message_comparison(
         .cloned()
         .collect();
     debug!(
-        "Comparing validated and filtered messages:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}",
-        "Deployment",
-        id.clone(),
-        "current time",
+        deployment_hash = id,
         time,
-        "Comparison time",
-        collect_window_end,
-        "Comparison block",
+        comparison_time = collect_window_end,
         compare_block,
-        "Comparison countdown (seconds)",
-        max(0, time - collect_window_end),
-        "Number of messages matching deployment and block number",
-        filter_msg.len(),
+        comparison_countdown_seconds = max(0, time - collect_window_end),
+        number_of_messages_matched_to_compare = filter_msg.len(),
+        "Comparison state",
     );
     let remote_attestations_result =
         process_messages(filter_msg, &registry_subgraph, &network_subgraph).await;
     let remote_attestations = match remote_attestations_result {
         Ok(remote) => {
-            debug!(
-                "Processed message\n{}: {}",
-                "Number of unique remote POIs",
-                remote.len(),
-            );
+            debug!(unique_remote_nPOIs = remote.len(), "Processed messages",);
             remote
         }
         Err(err) => {
             trace!(
-                "{}",
-                format!("{}{}", "An error occured while parsing messages: {}", err)
+                err = tracing::field::debug(&err),
+                "An error occured while parsing messages",
             );
             return Err(OperationError::Attestation(err));
         }
@@ -287,8 +277,8 @@ pub async fn gossip_poi(
         {
             params
         } else {
-            let err_msg = "Failed to set up message parameters for ...".to_string();
-            warn!("{}", err_msg);
+            let err_msg = "Failed to set up message parameters".to_string();
+            warn!(id, err_msg, "Gossip POI failed");
             continue;
         };
 
@@ -413,7 +403,7 @@ pub async fn compare_poi(
                         );
                 }
                 Err(e) => {
-                    warn!("Compare handles: {}", e.to_string());
+                    warn!(err = tracing::field::debug(&e), "Compare handles");
                     compare_ops.push(Err(e.clone_with_inner()));
                 }
             }

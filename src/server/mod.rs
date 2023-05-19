@@ -38,7 +38,7 @@ pub async fn run_server(
 
     let schema = build_schema(Arc::clone(&context)).await;
 
-    info!("API Service starting at {host}:{port}");
+    info!(host, port, "API Service starting");
 
     let app = Router::new()
         .route("/health", get(health))

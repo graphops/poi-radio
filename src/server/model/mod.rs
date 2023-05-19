@@ -135,16 +135,16 @@ impl QueryRoot {
         let remote_attestations = match remote_attestations_result {
             Ok(remote) => {
                 debug!(
-                    "Processed message\n{}: {}",
-                    "Number of unique remote POIs",
-                    remote.len(),
+                    number_of_unique_remote_npois = remote.len(),
+                    "Processed messages",
                 );
+
                 remote
             }
             Err(err) => {
                 debug!(
-                    "{}",
-                    format!("{}{}", "An error occured while parsing messages: {}", err)
+                    err = tracing::field::debug(&err),
+                    "An error occured while parsing messages"
                 );
                 return Err(err);
             }

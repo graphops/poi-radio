@@ -173,9 +173,9 @@ pub async fn process_messages(
     // update once at the end
     // active peers for each deployment
     debug!(
-        "process message into attestations: {:#?} -> {:#?}",
-        messages.len(),
-        remote_attestations.len()
+        num_msgs = messages.len(),
+        num_attestation = remote_attestations.len(),
+        "Process message into attestations",
     );
     // npoi_hist by attestation - don't care for attestation but should be grouped together
     // so the summed up metrics should be ACTIVE_INDEXERS
@@ -368,7 +368,6 @@ impl Display for ComparisonResultType {
 
 impl Display for ComparisonResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        debug!("Display for comparison reulst");
         match self.result_type {
             ComparisonResultType::NotFound => {
                 if self.local_attestation.is_none() {
@@ -442,9 +441,9 @@ pub async fn compare_attestations(
     ipfs_hash: &str,
 ) -> ComparisonResult {
     trace!(
-        "Comparing attestations:\nlocal: {:#?}\n remote: {:#?}",
-        local,
-        remote
+        local = tracing::field::debug(&local),
+        remote = tracing::field::debug(&remote),
+        "Comparing attestations",
     );
 
     let local = local.lock().await;
@@ -452,7 +451,7 @@ pub async fn compare_attestations(
     let blocks = match local.get(ipfs_hash) {
         Some(blocks) => blocks,
         None => {
-            debug!("No local attestation blocks stored for {}", ipfs_hash);
+            debug!(ipfs_hash, "No local attestation stored for any blocks",);
             return ComparisonResult {
                 deployment: ipfs_hash.to_string(),
                 block_number: attestation_block,
@@ -465,10 +464,7 @@ pub async fn compare_attestations(
     let local_attestation = match blocks.get(&attestation_block) {
         Some(attestations) => attestations,
         None => {
-            debug!(
-                "No local attestation stored for {} on block {}",
-                ipfs_hash, attestation_block
-            );
+            debug!(ipfs_hash, attestation_block, "No local attestation stored",);
             return ComparisonResult {
                 deployment: ipfs_hash.to_string(),
                 block_number: attestation_block,
@@ -482,7 +478,7 @@ pub async fn compare_attestations(
     let remote_blocks = match remote.get(ipfs_hash) {
         Some(blocks) => blocks,
         None => {
-            debug!("No remote attestation blocks stored for {}", ipfs_hash);
+            debug!(ipfs_hash, "No remote attestation stored for any block");
             return ComparisonResult {
                 deployment: ipfs_hash.to_string(),
                 block_number: attestation_block,
@@ -495,10 +491,7 @@ pub async fn compare_attestations(
     let remote_attestations = match remote_blocks.get(&attestation_block) {
         Some(attestations) if !attestations.is_empty() => attestations,
         _ => {
-            debug!(
-                "No remote attestation stored for {} on block {}",
-                ipfs_hash, attestation_block
-            );
+            debug!(ipfs_hash, attestation_block, "No remote attestation stored",);
             return ComparisonResult {
                 deployment: ipfs_hash.to_string(),
                 block_number: attestation_block,
@@ -519,18 +512,20 @@ pub async fn compare_attestations(
 
     if remote_attestations.len() > 1 {
         warn!(
-            "More than 1 nPOI found for subgraph {} on block {}. Attestations (sorted): {:#?}",
-            ipfs_hash, attestation_block, remote_attestations
+            ipfs_hash,
+            attestation_block,
+            sorted_attestations = tracing::field::debug(&remote_attestations),
+            "More than 1 nPOI found",
         );
     }
 
     let most_attested_npoi = &remote_attestations.last().unwrap().npoi;
     if most_attested_npoi == &local_attestation.npoi {
         info!(
-            "nPOI matched for subgraph {} on block {} with {} of remote attestations",
             ipfs_hash,
             attestation_block,
-            remote_attestations.len(),
+            num_unique_npois = remote_attestations.len(),
+            "nPOI matched",
         );
         ComparisonResult {
             deployment: ipfs_hash.to_string(),
@@ -541,8 +536,10 @@ pub async fn compare_attestations(
         }
     } else {
         info!(
-            "Number of nPOI submitted for block {}: {:#?}\n{}: {:#?}",
-            attestation_block, remote_attestations, "Local attestation", local_attestation
+            attestation_block,
+            remote_attestations = tracing::field::debug(&remote_attestations),
+            local_attestation = tracing::field::debug(&local_attestation),
+            "Number of nPOI submitted",
         );
         ComparisonResult {
             deployment: ipfs_hash.to_string(),
@@ -603,19 +600,13 @@ pub async fn log_gossip_summary(
     }
 
     info!(
-        "Gossip events summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}",
-        "Chainhead blocks",
-        blocks_str,
-        "# of deployments tracked",
+        chainhead = blocks_str,
         num_topics,
-        "# of deployment updates sent",
-        send_success.len(),
-        "# of deployments waiting for next message interval",
-        skip_repeated.len(),
-        "# of deployments catching up to chainhead",
-        trigger_failed.len(),
-        "Deployments failed to build message",
-        build_errors,
+        num_sent_success = send_success.len(),
+        num_sent_previously = skip_repeated.len(),
+        num_syncing_to_chainhead = trigger_failed.len(),
+        build_errors = tracing::field::debug(&build_errors),
+        "Gossip summary",
     );
 }
 
@@ -653,7 +644,7 @@ pub async fn log_comparison_summary(
                 not_found_strings.push(x.to_string());
             }
             Ok(x) if x.result_type == ComparisonResultType::Divergent => {
-                error!("{}", x.to_string());
+                error!(result = x.to_string(), "Found nPOI divergence!");
                 if let (Some(token), Some(channel)) = (&slack_token, &slack_channel) {
                     if let Err(e) = SlackBot::send_webhook(
                         token.to_string(),
@@ -663,7 +654,10 @@ pub async fn log_comparison_summary(
                     )
                     .await
                     {
-                        warn!("Failed to send notification to Slack: {}", e);
+                        warn!(
+                            err = tracing::field::debug(e),
+                            "Failed to send notification to Slack"
+                        );
                     }
                 }
 
@@ -671,7 +665,10 @@ pub async fn log_comparison_summary(
                     if let Err(e) =
                         DiscordBot::send_webhook(&webhook_url, radio_name(), &x.to_string()).await
                     {
-                        warn!("Failed to send notification to Discord: {}", e);
+                        warn!(
+                            err = tracing::field::debug(e),
+                            "Failed to send notification to Discord"
+                        );
                     }
                 }
                 divergent_strings.push(x.to_string());
@@ -686,25 +683,16 @@ pub async fn log_comparison_summary(
     DIVERGING_SUBGRAPHS.set(divergent_strings.len().try_into().unwrap());
 
     info!(
-        "Comparison summary for\n{}: {}:\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {:#?}\n{}: {:#?}\n{}: {:#?}",
-        "Chainhead blocks",
-        blocks_str.clone(),
-        "# of deployments tracked",
+        chainhead_blocks = blocks_str,
         num_topics,
-        "# of deployments actively cross-checked",
-        match_strings.len() + divergent_strings.len(),
-        "# of successful attestations",
-        match_strings.len(),
-        "# of deployments without matching attestations",
-        not_found_strings.len(),
-        "# of deployments waiting for comparison trigger",
-        cmp_trigger_failed.len(),
-        "Divergence",
-        divergent_strings,
-        "Attestation failed",
-        attestation_failed,
-        "Comparison failed",
-        cmp_errors,
+        num_active_crosschecks = match_strings.len() + divergent_strings.len(),
+        num_attestations_matched = match_strings.len(),
+        num_topics_inactive = not_found_strings.len(),
+        num_waiting_to_compare = cmp_trigger_failed.len(),
+        diverged = tracing::field::debug(divergent_strings),
+        attestation_failed = tracing::field::debug(attestation_failed),
+        comparison_errors = tracing::field::debug(cmp_errors),
+        "Comparison state",
     );
 }
 
