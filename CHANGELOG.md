@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [unreleased]
 
+### Features
+
+- Ratio queries added, refactor logs
+- Persist file for local attestations and remote msgs
+- Add options to toggle logger format
+
+### Miscellaneous Tasks
+
+- Update dependencies without conflicts
+- Update CI workflow and add docs
+- Revert CI workflow
+- Remove e2e test suite from repo
+
+### Refactor
+
+- Split comparison and gossip of POI
+
+## [0.2.0] - 2023-05-09
+
 ### Bug Fixes
 
 - Stake query address
@@ -71,6 +90,7 @@ All notable changes to this project will be documented in this file.
 - Tweak crates badge
 - Release v0.1.1
 - Release v0.1.3
+- Release v0.2.0
 
 ### Refactor
 

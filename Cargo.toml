@@ -1,6 +1,6 @@
 [package]
 name = "poi-radio"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["GraphOps (axiomatic-aardvark, hopeyen)"]
 description = "POI Radio monitors subgraph data integrity in real time using Graphcast SDK"
@@ -61,7 +61,7 @@ clap = { version = "3.2.25", features = ["derive", "env"] }
 # console-subscriber = "0.1.9"
 
 [dev-dependencies]
-criterion = {version = "0.4", features = [ "async", "async_futures" ]}
+criterion = { version = "0.4", features = ["async", "async_futures"] }
 rand = "0.8"
 
 [[bench]]
