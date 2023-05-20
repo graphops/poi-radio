@@ -1,3 +1,4 @@
+use crate::state::PersistedState;
 use clap::Parser;
 use ethers::signers::WalletError;
 use graphcast_sdk::{
@@ -11,9 +12,6 @@ use graphcast_sdk::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
-
-use crate::radio_name;
-use crate::state::PersistedState;
 
 #[derive(clap::ValueEnum, Clone, Debug, Serialize, Deserialize)]
 pub enum CoverageLevel {
@@ -324,8 +322,11 @@ impl Config {
         }
     }
 
-    pub async fn create_graphcast_agent(&self) -> Result<GraphcastAgent, GraphcastAgentError> {
-        let config = self.to_graphcast_agent_config(radio_name()).await.unwrap();
+    pub async fn create_graphcast_agent(
+        &self,
+        radio_name: &'static str,
+    ) -> Result<GraphcastAgent, GraphcastAgentError> {
+        let config = self.to_graphcast_agent_config(radio_name).await.unwrap();
         GraphcastAgent::new(config).await
     }
 }

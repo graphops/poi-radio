@@ -1,8 +1,10 @@
 on:
   push:
     branches: [main, dev]
-  pull_request_review:
-    types: [submitted]
+  # pull_request_review:
+  #types: [submitted]
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 name: CI
 
@@ -105,3 +107,43 @@ jobs:
         continue-on-error: false
         with:
           command: clippy
+  e2e-tests:
+    name: E2E Test Suite
+    # if: github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    env:
+      GRAPH_NODE_STATUS_ENDPOINT: "http://localhost:8030/graphql"
+      REGISTRY_SUBGRAPH: "https://api.thegraph.com/subgraphs/name/hopeyen/graphcast-registry-goerli"
+      NETWORK_SUBGRAPH: "https://gateway.testnet.thegraph.com/network"
+      GRAPHCAST_NETWORK: testnet
+      RUST_LOG: "off,hyper=off,graphcast_sdk=debug,poi_radio=debug,integration_tests=debug"
+      PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v2
+        with:
+          repository: graphops/poi-radio
+          token: ${{ secrets.GH_PAT }}
+      - name: Checkout test repo
+        uses: actions/checkout@v2
+        with:
+          repository: graphops/poi-radio-e2e-tests
+          token: ${{ secrets.GH_PAT }}
+          path: test
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Setup git with token
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - name: Build
+        run: |
+          cd test
+          cargo build --verbose
+        shell: bash
+
+      - name: Run tests
+        run: cd test && cargo run --bin test-runner
+        shell: bash
