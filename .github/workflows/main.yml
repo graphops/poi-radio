@@ -105,3 +105,38 @@ jobs:
         continue-on-error: false
         with:
           command: clippy
+  e2e-tests:
+    name: E2E Test Suite
+    if: github.event.review.state == 'approved'
+    runs-on: macos-latest
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v2
+        with:
+          repository: graphops/poi-radio
+          token: ${{ secrets.GH_PAT }}
+      - name: Checkout test repo
+        uses: actions/checkout@v2
+        with:
+          repository: graphops/poi-radio-e2e-tests
+          token: ${{ secrets.GH_PAT }}
+          path: test
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Setup git with token
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - name: Build
+        run: |
+          cd test
+          cargo build --verbose
+        shell: bash
+      - name: Run tests
+        run: |
+          cd test
+          cargo run --bin test-runner --verbose
+          if [ $? -ne 0 ]; then exit 1; fi
+        shell: bash

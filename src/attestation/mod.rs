@@ -22,7 +22,7 @@ use crate::{
     metrics::{
         ACTIVE_INDEXERS, DIVERGING_SUBGRAPHS, INDEXER_COUNT_BY_NPOI, LOCAL_NPOIS_TO_COMPARE,
     },
-    radio_name, OperationError, RadioPayloadMessage, CONFIG,
+    OperationError, RadioPayloadMessage, CONFIG,
 };
 
 /// A wrapper around an attested NPOI, tracks Indexers that have sent it plus their accumulated stake
@@ -616,6 +616,7 @@ pub async fn log_comparison_summary(
     blocks_str: String,
     num_topics: usize,
     result_strings: Vec<Result<ComparisonResult, OperationError>>,
+    radio_name: &'static str,
 ) {
     let slack_token = CONFIG.get().unwrap().lock().unwrap().slack_token.clone();
     let slack_channel = CONFIG.get().unwrap().lock().unwrap().slack_channel.clone();
@@ -649,7 +650,7 @@ pub async fn log_comparison_summary(
                     if let Err(e) = SlackBot::send_webhook(
                         token.to_string(),
                         channel,
-                        radio_name(),
+                        radio_name,
                         &x.to_string(),
                     )
                     .await
@@ -663,7 +664,7 @@ pub async fn log_comparison_summary(
 
                 if let Some(webhook_url) = discord_webhook.clone() {
                     if let Err(e) =
-                        DiscordBot::send_webhook(&webhook_url, radio_name(), &x.to_string()).await
+                        DiscordBot::send_webhook(&webhook_url, radio_name, &x.to_string()).await
                     {
                         warn!(
                             err = tracing::field::debug(e),
