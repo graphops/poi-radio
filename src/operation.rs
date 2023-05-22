@@ -403,7 +403,7 @@ pub async fn compare_poi(
                         );
                 }
                 Err(e) => {
-                    warn!(err = tracing::field::debug(&e), "Compare handles");
+                    trace!(err = tracing::field::debug(&e), "Compare handles");
                     compare_ops.push(Err(e.clone_with_inner()));
                 }
             }
