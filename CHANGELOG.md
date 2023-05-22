@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [unreleased]
 
+### Refactor
+
+- Update logging level
+
+## [0.3.0] - 2023-05-20
+
 ### Features
 
 - Ratio queries added, refactor logs
@@ -16,6 +22,7 @@ All notable changes to this project will be documented in this file.
 - Update CI workflow and add docs
 - Revert CI workflow
 - Remove e2e test suite from repo
+- Release 0.3.0
 
 ### Refactor
 
