@@ -1,5 +1,6 @@
 use dotenv::dotenv;
-use std::collections::HashMap;
+use poi_radio::attestation::process_comparison_results;
+use std::collections::{HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex as SyncMutex,
@@ -19,7 +20,7 @@ use graphcast_sdk::{
     BlockPointer,
 };
 use poi_radio::{
-    attestation::{log_comparison_summary, log_gossip_summary, LocalAttestationsMap},
+    attestation::{log_gossip_summary, LocalAttestationsMap},
     chainhead_block_str,
     config::Config,
     generate_topics,
@@ -115,6 +116,8 @@ async fn main() {
     if CONFIG.get().unwrap().lock().unwrap().server_port.is_some() {
         tokio::spawn(run_server(running.clone(), Arc::clone(&local_attestations)));
     }
+
+    let mut divergent_subgraphs: HashSet<String> = HashSet::new();
 
     // Main loop for sending messages, can factor out
     // and take radio specific query and parsing for radioPayload
@@ -271,10 +274,11 @@ async fn main() {
                     )
                     .await;
 
-                    log_comparison_summary(
+                    process_comparison_results(
                         blocks_str,
                         identifiers.len(),
                         comparison_res,
+                        &mut divergent_subgraphs
                     )
                 }).await;
 

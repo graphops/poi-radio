@@ -5,7 +5,7 @@ use num_traits::Zero;
 use serde_derive::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::{self, Display},
     sync::Arc,
 };
@@ -610,13 +610,16 @@ pub async fn log_gossip_summary(
     );
 }
 
-/// This function logs the operational summary of the main event loop
-#[allow(clippy::too_many_arguments)]
-pub async fn log_comparison_summary(
-    blocks_str: String,
-    num_topics: usize,
-    result_strings: Vec<Result<ComparisonResult, OperationError>>,
+fn update_divergent_subgraphs(
+    divergent_subgraphs: &mut HashSet<String>,
+    comparison_result: &ComparisonResult,
 ) {
+    if divergent_subgraphs.contains(&comparison_result.deployment) {
+        divergent_subgraphs.remove(&comparison_result.deployment);
+    }
+}
+
+async fn notify(divergent_subgraphs: &mut HashSet<String>, comparison_result: &ComparisonResult) {
     let slack_token = CONFIG.get().unwrap().lock().unwrap().slack_token.clone();
     let slack_channel = CONFIG.get().unwrap().lock().unwrap().slack_channel.clone();
     let discord_webhook = CONFIG
@@ -627,6 +630,49 @@ pub async fn log_comparison_summary(
         .discord_webhook
         .clone();
 
+    if divergent_subgraphs.contains(&comparison_result.deployment) {
+        trace!("Known divergence, skipping notifications.");
+    } else {
+        if let (Some(token), Some(channel)) = (&slack_token, &slack_channel) {
+            if let Err(e) = SlackBot::send_webhook(
+                token.to_string(),
+                channel,
+                radio_name(),
+                &comparison_result.to_string(),
+            )
+            .await
+            {
+                warn!(
+                    err = tracing::field::debug(e),
+                    "Failed to send notification to Slack"
+                );
+            }
+        }
+
+        if let Some(webhook_url) = discord_webhook.clone() {
+            if let Err(e) =
+                DiscordBot::send_webhook(&webhook_url, radio_name(), &comparison_result.to_string())
+                    .await
+            {
+                warn!(
+                    err = tracing::field::debug(e),
+                    "Failed to send notification to Discord"
+                );
+            }
+        }
+
+        divergent_subgraphs.insert(comparison_result.deployment.clone());
+    }
+}
+
+/// This function logs the operational summary of the main event loop
+#[allow(clippy::too_many_arguments)]
+pub async fn process_comparison_results(
+    blocks_str: String,
+    num_topics: usize,
+    result_strings: Vec<Result<ComparisonResult, OperationError>>,
+    divergent_subgraphs: &mut HashSet<String>,
+) {
     // Generate attestation summary
     let mut match_strings = vec![];
     let mut not_found_strings = vec![];
@@ -638,6 +684,7 @@ pub async fn log_comparison_summary(
     for result in result_strings {
         match result {
             Ok(x) if x.result_type == ComparisonResultType::Match => {
+                update_divergent_subgraphs(divergent_subgraphs, &x);
                 match_strings.push(x.to_string());
             }
             Ok(x) if x.result_type == ComparisonResultType::NotFound => {
@@ -645,32 +692,8 @@ pub async fn log_comparison_summary(
             }
             Ok(x) if x.result_type == ComparisonResultType::Divergent => {
                 error!(result = x.to_string(), "Found nPOI divergence!");
-                if let (Some(token), Some(channel)) = (&slack_token, &slack_channel) {
-                    if let Err(e) = SlackBot::send_webhook(
-                        token.to_string(),
-                        channel,
-                        radio_name(),
-                        &x.to_string(),
-                    )
-                    .await
-                    {
-                        warn!(
-                            err = tracing::field::debug(e),
-                            "Failed to send notification to Slack"
-                        );
-                    }
-                }
+                notify(divergent_subgraphs, &x).await;
 
-                if let Some(webhook_url) = discord_webhook.clone() {
-                    if let Err(e) =
-                        DiscordBot::send_webhook(&webhook_url, radio_name(), &x.to_string()).await
-                    {
-                        warn!(
-                            err = tracing::field::debug(e),
-                            "Failed to send notification to Discord"
-                        );
-                    }
-                }
                 divergent_strings.push(x.to_string());
             }
             Ok(x) => attestation_failed.push(x.to_string()),
@@ -1109,5 +1132,39 @@ mod tests {
                 .npoi
                 == *"npoi-x"
         );
+    }
+
+    #[test]
+    fn test_update_divergent_subgraphs() {
+        let mut divergent_subgraphs = HashSet::new();
+        let comparison_result = ComparisonResult {
+            deployment: String::from("deployment1"),
+            block_number: 1,
+            result_type: ComparisonResultType::Match,
+            local_attestation: None,
+            attestations: vec![],
+        };
+
+        divergent_subgraphs.insert(comparison_result.deployment.clone());
+
+        update_divergent_subgraphs(&mut divergent_subgraphs, &comparison_result);
+
+        assert!(!divergent_subgraphs.contains(&comparison_result.deployment));
+    }
+
+    #[tokio::test]
+    #[should_panic]
+    async fn test_notify_known_divergence() {
+        let mut divergent_subgraphs = HashSet::new();
+        let comparison_result = ComparisonResult {
+            deployment: String::from("deployment1"),
+            block_number: 1,
+            result_type: ComparisonResultType::Divergent,
+            local_attestation: None,
+            attestations: vec![],
+        };
+
+        divergent_subgraphs.insert(comparison_result.deployment.clone());
+        notify(&mut divergent_subgraphs, &comparison_result).await;
     }
 }
