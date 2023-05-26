@@ -22,7 +22,7 @@ categories = [
 
 [dependencies]
 waku = { git = "https://github.com/waku-org/waku-rust-bindings", package = "waku-bindings" }
-graphcast-sdk = { git = "https://github.com/graphops/graphcast-sdk", branch = "petko/add-telegram-support" }
+graphcast-sdk = { git = "https://github.com/graphops/graphcast-sdk", branch = "petko/switch-radio-name-to-string" }
 poi-radio = { path = "../poi-radio" }
 tokio = { version = "1.1.1", features = ["full", "rt"] }
 tracing = "0.1"

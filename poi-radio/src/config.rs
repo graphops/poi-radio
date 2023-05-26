@@ -12,7 +12,6 @@ use graphcast_sdk::{
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use crate::radio_name;
 use crate::state::PersistedState;
 
 #[derive(clap::ValueEnum, Clone, Debug, Serialize, Deserialize)]
@@ -283,14 +282,13 @@ impl Config {
 
     pub async fn to_graphcast_agent_config(
         &self,
-        radio_name: &'static str,
     ) -> Result<GraphcastAgentConfig, GraphcastAgentError> {
         let wallet_key = self.wallet_input().unwrap().to_string();
         let topics = self.topics.clone();
 
         GraphcastAgentConfig::new(
             wallet_key,
-            radio_name,
+            self.radio_name.clone(),
             self.registry_subgraph.clone(),
             self.network_subgraph.clone(),
             self.graph_node_endpoint.clone(),
@@ -347,7 +345,7 @@ impl Config {
     }
 
     pub async fn create_graphcast_agent(&self) -> Result<GraphcastAgent, GraphcastAgentError> {
-        let config = self.to_graphcast_agent_config(radio_name()).await.unwrap();
+        let config = self.to_graphcast_agent_config().await.unwrap();
         GraphcastAgent::new(config).await
     }
 }

@@ -11,13 +11,13 @@ use utils::config::test_config;
 use utils::mock_server::start_mock_server;
 
 struct Cleanup {
-    sender: Arc<Mutex<Child>>,
+    // sender: Arc<Mutex<Child>>,
     radio: Arc<Mutex<Child>>,
 }
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        let _ = self.sender.lock().unwrap().kill();
+        // let _ = self.sender.lock().unwrap().kill();
         let _ = self.radio.lock().unwrap().kill();
     }
 }
@@ -45,14 +45,15 @@ pub async fn main() {
     });
 
     // Your logic to start sender and radio
-    let sender = Arc::new(Mutex::new(
-        Command::new("echo").arg("Sender started").spawn().unwrap(),
-    ));
-    let radio = Arc::new(Mutex::new(
-        Command::new("echo").arg("Radio started").spawn().unwrap(),
-    ));
-
-    let _cleanup = Cleanup { sender, radio };
+    // let sender = Arc::new(Mutex::new(
+    //     Command::new("cargo")
+    //         .arg("run")
+    //         .arg("--bin")
+    //         .arg("sender")
+    //         .stdout(Stdio::piped())
+    //         .spawn()
+    //         .expect("Failed to start command"),
+    // ));
 
     info!("server created and time awaited?");
 
@@ -67,38 +68,41 @@ pub async fn main() {
         format!("http://{}/network-subgraph", host),
     );
 
-    // Run the 'cargo run --bin radio' command
-    Command::new("cargo")
-        .args(["run", "-p", "poi-radio", "--"])
-        .args(["--graph-node-endpoint", &config.graph_node_endpoint])
-        .args(["--radio-name", &config.radio_name])
-        .args(["--private-key", &config.private_key.unwrap()])
-        .args(["--registry-subgraph", &config.registry_subgraph])
-        .args(["--network-subgraph", &config.network_subgraph])
-        .args(["--graphcast-network", &config.graphcast_network])
-        .args(["--topics", &config.topics.join(",")])
-        .args([
-            "--coverage",
-            match config.coverage {
-                CoverageLevel::OnChain => "on-chain",
-                CoverageLevel::Minimal => "minimal",
-                CoverageLevel::Comprehensive => "comprehensive",
-            },
-        ])
-        .args([
-            "--collect-message-duration",
-            &config.collect_message_duration.to_string(),
-        ])
-        .args(["--log-level", &config.log_level])
-        .args(["--log-format", &config.log_format])
-        .args([
-            "--persistence-file-path",
-            &config.persistence_file_path.unwrap(),
-        ])
-        .stdout(Stdio::inherit()) // so it outputs to the terminal
-        .spawn()
-        .expect("Failed to start command");
+    let radio = Arc::new(Mutex::new(
+        Command::new("cargo")
+            .args(["run", "-p", "poi-radio", "--"])
+            .args(["--graph-node-endpoint", &config.graph_node_endpoint])
+            .args(["--radio-name", "poi-radio-test"])
+            .args(["--private-key", &config.private_key.unwrap()])
+            .args(["--registry-subgraph", &config.registry_subgraph])
+            .args(["--network-subgraph", &config.network_subgraph])
+            .args(["--graphcast-network", &config.graphcast_network])
+            .args(["--topics", &config.topics.join(",")])
+            .args([
+                "--coverage",
+                match config.coverage {
+                    CoverageLevel::OnChain => "on-chain",
+                    CoverageLevel::Minimal => "minimal",
+                    CoverageLevel::Comprehensive => "comprehensive",
+                },
+            ])
+            .args([
+                "--collect-message-duration",
+                &config.collect_message_duration.to_string(),
+            ])
+            .args(["--log-level", &config.log_level])
+            .args(["--log-format", &config.log_format])
+            .args([
+                "--persistence-file-path",
+                &config.persistence_file_path.unwrap(),
+            ])
+            .stdout(Stdio::inherit()) // so it outputs to the terminal
+            .spawn()
+            .expect("Failed to start command"),
+    ));
 
-    // Wait for the server thread to finish
+    let _cleanup = Cleanup { radio };
+    // let _cleanup = Cleanup { sender, radio };
+
     server_handle.join().unwrap();
 }
