@@ -56,6 +56,14 @@ pub struct Config {
     pub mnemonic: Option<String>,
     #[clap(
         long,
+        value_name = "RADIO_NAME",
+        env = "RADIO_NAME",
+        help = "Radio name, also used for Waku content topic",
+        default_value = "poi-radio"
+    )]
+    pub radio_name: String,
+    #[clap(
+        long,
         value_name = "SUBGRAPH",
         env = "REGISTRY_SUBGRAPH",
         help = "Subgraph endpoint to the Graphcast Registry",

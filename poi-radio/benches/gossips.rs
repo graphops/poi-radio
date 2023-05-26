@@ -1,5 +1,6 @@
 use criterion::async_executor::FuturesExecutor;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use poi_radio::radio_name;
 use rand::{thread_rng, Rng};
 use secp256k1::SecretKey;
 use std::collections::HashMap;
@@ -54,6 +55,7 @@ fn gossip_poi_bench(c: &mut Criterion) {
         server_port: None,
         log_format: String::from("pretty"),
         persistence_file_path: None,
+        radio_name: radio_name().to_string(),
     });
     _ = black_box(CONFIG.set(Arc::new(SyncMutex::new(config))));
 
