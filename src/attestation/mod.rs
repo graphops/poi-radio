@@ -13,7 +13,6 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, error, info, trace, warn};
 
 use graphcast_sdk::{
-    bots::{DiscordBot, SlackBot},
     graphcast_agent::message_typing::{get_indexer_stake, BuildMessageError, GraphcastMessage},
     graphql::client_registry::query_registry_indexer,
 };
@@ -22,7 +21,8 @@ use crate::{
     metrics::{
         ACTIVE_INDEXERS, DIVERGING_SUBGRAPHS, INDEXER_COUNT_BY_NPOI, LOCAL_NPOIS_TO_COMPARE,
     },
-    radio_name, OperationError, RadioPayloadMessage, CONFIG,
+    notifier::Notifier,
+    OperationError, RadioPayloadMessage,
 };
 
 /// A wrapper around an attested NPOI, tracks Indexers that have sent it plus their accumulated stake
@@ -619,52 +619,6 @@ fn update_divergent_subgraphs(
     }
 }
 
-async fn notify(divergent_subgraphs: &mut HashSet<String>, comparison_result: &ComparisonResult) {
-    let slack_token = CONFIG.get().unwrap().lock().unwrap().slack_token.clone();
-    let slack_channel = CONFIG.get().unwrap().lock().unwrap().slack_channel.clone();
-    let discord_webhook = CONFIG
-        .get()
-        .unwrap()
-        .lock()
-        .unwrap()
-        .discord_webhook
-        .clone();
-
-    if divergent_subgraphs.contains(&comparison_result.deployment) {
-        trace!("Known divergence, skipping notifications.");
-    } else {
-        if let (Some(token), Some(channel)) = (&slack_token, &slack_channel) {
-            if let Err(e) = SlackBot::send_webhook(
-                token.to_string(),
-                channel,
-                radio_name(),
-                &comparison_result.to_string(),
-            )
-            .await
-            {
-                warn!(
-                    err = tracing::field::debug(e),
-                    "Failed to send notification to Slack"
-                );
-            }
-        }
-
-        if let Some(webhook_url) = discord_webhook.clone() {
-            if let Err(e) =
-                DiscordBot::send_webhook(&webhook_url, radio_name(), &comparison_result.to_string())
-                    .await
-            {
-                warn!(
-                    err = tracing::field::debug(e),
-                    "Failed to send notification to Discord"
-                );
-            }
-        }
-
-        divergent_subgraphs.insert(comparison_result.deployment.clone());
-    }
-}
-
 /// This function logs the operational summary of the main event loop
 #[allow(clippy::too_many_arguments)]
 pub async fn process_comparison_results(
@@ -672,6 +626,7 @@ pub async fn process_comparison_results(
     num_topics: usize,
     result_strings: Vec<Result<ComparisonResult, OperationError>>,
     divergent_subgraphs: &mut HashSet<String>,
+    notifier: Notifier,
 ) {
     // Generate attestation summary
     let mut match_strings = vec![];
@@ -692,7 +647,12 @@ pub async fn process_comparison_results(
             }
             Ok(x) if x.result_type == ComparisonResultType::Divergent => {
                 error!(result = x.to_string(), "Found nPOI divergence!");
-                notify(divergent_subgraphs, &x).await;
+                if divergent_subgraphs.contains(&x.deployment) {
+                    trace!("Known divergence, skipping notifications.");
+                } else {
+                    notifier.clone().notify(x.to_string()).await;
+                    divergent_subgraphs.insert(x.deployment.clone());
+                }
 
                 divergent_strings.push(x.to_string());
             }
@@ -735,6 +695,8 @@ impl ErrorExtensions for AttestationError {
 
 #[cfg(test)]
 mod tests {
+    use crate::{radio_name, CONFIG};
+
     use super::*;
 
     // TODO: add setup and teardown functions
@@ -1155,6 +1117,11 @@ mod tests {
     #[tokio::test]
     #[should_panic]
     async fn test_notify_known_divergence() {
+        let notifier = Notifier::from_config(
+            radio_name().to_string(),
+            &CONFIG.get().unwrap().lock().unwrap(),
+        );
+
         let mut divergent_subgraphs = HashSet::new();
         let comparison_result = ComparisonResult {
             deployment: String::from("deployment1"),
@@ -1165,6 +1132,11 @@ mod tests {
         };
 
         divergent_subgraphs.insert(comparison_result.deployment.clone());
-        notify(&mut divergent_subgraphs, &comparison_result).await;
+        if divergent_subgraphs.contains(&comparison_result.deployment) {
+            trace!("Known divergence, skipping notifications.");
+        } else {
+            notifier.clone().notify(comparison_result.to_string()).await;
+            divergent_subgraphs.insert(comparison_result.deployment.clone());
+        }
     }
 }

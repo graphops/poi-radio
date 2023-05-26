@@ -183,6 +183,20 @@ pub struct Config {
     pub discord_webhook: Option<String>,
     #[clap(
         long,
+        value_name = "TELEGRAM_TOKEN",
+        help = "Telegram Bot API Token",
+        env = "TELEGRAM_TOKEN"
+    )]
+    pub telegram_token: Option<String>,
+    #[clap(
+        long,
+        value_name = "TELEGRAM_CHAT_ID",
+        help = "Id of Telegram chat (DM or group) to send messages to",
+        env = "TELEGRAM_CHAT_ID"
+    )]
+    pub telegram_chat_id: Option<i64>,
+    #[clap(
+        long,
         value_name = "METRICS_HOST",
         help = "If set, the Radio will expose Prometheus metrics on the given host (off by default). This requires having a local Prometheus server running and scraping metrics on the given port.",
         env = "METRICS_HOST"

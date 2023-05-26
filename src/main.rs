@@ -1,5 +1,7 @@
 use dotenv::dotenv;
 use poi_radio::attestation::process_comparison_results;
+use poi_radio::notifier::Notifier;
+use poi_radio::radio_name;
 use std::collections::{HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -105,6 +107,11 @@ async fn main() {
     let iteration_timeout = Duration::from_secs(180);
     let update_timeout = Duration::from_secs(10);
     let gossip_timeout = Duration::from_secs(150);
+
+    let notifier = Notifier::from_config(
+        radio_name().to_string(),
+        &CONFIG.get().unwrap().lock().unwrap(),
+    );
 
     // Separate control flow thread to skip a main loop iteration when hit timeout
     tokio::spawn(async move {
@@ -278,7 +285,8 @@ async fn main() {
                         blocks_str,
                         identifiers.len(),
                         comparison_res,
-                        &mut divergent_subgraphs
+                        &mut divergent_subgraphs,
+                        notifier.clone()
                     )
                 }).await;
 
