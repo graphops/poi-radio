@@ -37,6 +37,7 @@ pub mod attestation;
 pub mod config;
 pub mod graphql;
 pub mod metrics;
+pub mod notifier;
 pub mod operation;
 pub mod server;
 pub mod state;
