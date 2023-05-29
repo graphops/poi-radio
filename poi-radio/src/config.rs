@@ -1,3 +1,5 @@
+use std::fmt;
+
 use clap::Parser;
 use ethers::signers::WalletError;
 use graphcast_sdk::{
@@ -12,7 +14,6 @@ use graphcast_sdk::{
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use crate::radio_name;
 use crate::state::PersistedState;
 
 #[derive(clap::ValueEnum, Clone, Debug, Serialize, Deserialize)]
@@ -20,6 +21,16 @@ pub enum CoverageLevel {
     Minimal,
     OnChain,
     Comprehensive,
+}
+
+impl fmt::Display for CoverageLevel {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            CoverageLevel::Minimal => write!(f, "Minimal"),
+            CoverageLevel::OnChain => write!(f, "OnChain"),
+            CoverageLevel::Comprehensive => write!(f, "Comprehensive"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Parser, Serialize, Deserialize)]
@@ -226,6 +237,13 @@ pub struct Config {
         default_value = "pretty"
     )]
     pub log_format: String,
+    #[clap(
+        long,
+        value_name = "RADIO_NAME",
+        env = "RADIO_NAME",
+        default_value = "poi-radio"
+    )]
+    pub radio_name: String,
 }
 
 impl Config {
@@ -261,14 +279,13 @@ impl Config {
 
     pub async fn to_graphcast_agent_config(
         &self,
-        radio_name: &'static str,
     ) -> Result<GraphcastAgentConfig, GraphcastAgentError> {
         let wallet_key = self.wallet_input().unwrap().to_string();
         let topics = self.topics.clone();
 
         GraphcastAgentConfig::new(
             wallet_key,
-            radio_name,
+            self.radio_name.clone(),
             self.registry_subgraph.clone(),
             self.network_subgraph.clone(),
             self.graph_node_endpoint.clone(),
@@ -325,7 +342,7 @@ impl Config {
     }
 
     pub async fn create_graphcast_agent(&self) -> Result<GraphcastAgent, GraphcastAgentError> {
-        let config = self.to_graphcast_agent_config(radio_name()).await.unwrap();
+        let config = self.to_graphcast_agent_config().await.unwrap();
         GraphcastAgent::new(config).await
     }
 }

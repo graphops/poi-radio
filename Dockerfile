@@ -20,7 +20,7 @@ WORKDIR /poi-radio
 RUN sh install-golang.sh
 ENV PATH=$PATH:/usr/local/go/bin
 
-RUN cargo build --release
+RUN cargo build --release -p poi-radio
 
 FROM alpine:3.17.3 as alpine
 RUN set -x \
