@@ -1,3 +1,5 @@
+use std::fmt;
+
 use clap::Parser;
 use ethers::signers::WalletError;
 use graphcast_sdk::{
@@ -19,6 +21,16 @@ pub enum CoverageLevel {
     Minimal,
     OnChain,
     Comprehensive,
+}
+
+impl fmt::Display for CoverageLevel {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            CoverageLevel::Minimal => write!(f, "Minimal"),
+            CoverageLevel::OnChain => write!(f, "OnChain"),
+            CoverageLevel::Comprehensive => write!(f, "Comprehensive"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Parser, Serialize, Deserialize)]

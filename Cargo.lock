@@ -2353,7 +2353,7 @@ dependencies = [
 [[package]]
 name = "graphcast-sdk"
 version = "0.3.1"
-source = "git+https://github.com/graphops/graphcast-sdk?branch=dev#f650a45dce910a93c60af28a253180e74ebdcb47"
+source = "git+https://github.com/graphops/graphcast-sdk#f650a45dce910a93c60af28a253180e74ebdcb47"
 dependencies = [
  "anyhow",
  "async-graphql",
@@ -3946,7 +3946,7 @@ dependencies = [
  "ethers-contract",
  "ethers-core 2.0.5",
  "ethers-derive-eip712",
- "graphcast-sdk 0.3.1 (git+https://github.com/graphops/graphcast-sdk?branch=dev)",
+ "graphcast-sdk 0.3.1 (git+https://github.com/graphops/graphcast-sdk)",
  "graphql_client 0.9.0",
  "hex",
  "metrics",
