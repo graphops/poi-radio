@@ -37,6 +37,7 @@ pub mod attestation;
 pub mod config;
 pub mod graphql;
 pub mod metrics;
+pub mod notifier;
 pub mod operation;
 pub mod server;
 pub mod state;
@@ -57,8 +58,8 @@ pub static MESSAGES: OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMes
 /// Radio's global config
 pub static CONFIG: OnceCell<Arc<SyncMutex<Config>>> = OnceCell::new();
 
-pub fn radio_name() -> &'static str {
-    "poi-radio"
+pub fn radio_name() -> String {
+    "poi-radio".to_string()
 }
 
 #[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize, PartialEq, SimpleObject)]

@@ -46,6 +46,8 @@ fn gossip_poi_bench(c: &mut Criterion) {
         slack_token: None,
         slack_channel: None,
         discord_webhook: None,
+        telegram_token: None,
+        telegram_chat_id: None,
         metrics_host: None,
         metrics_port: None,
         server_host: None,

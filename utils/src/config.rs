@@ -36,6 +36,8 @@ pub fn test_config(
         slack_token: None,
         slack_channel: None,
         discord_webhook: None,
+        telegram_chat_id: None,
+        telegram_token: None,
         metrics_host: None,
         metrics_port: None,
         server_host: None,

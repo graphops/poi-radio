@@ -1,5 +1,3 @@
-use std::fmt;
-
 use clap::Parser;
 use ethers::signers::WalletError;
 use graphcast_sdk::{
@@ -21,16 +19,6 @@ pub enum CoverageLevel {
     Minimal,
     OnChain,
     Comprehensive,
-}
-
-impl fmt::Display for CoverageLevel {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            CoverageLevel::Minimal => write!(f, "Minimal"),
-            CoverageLevel::OnChain => write!(f, "OnChain"),
-            CoverageLevel::Comprehensive => write!(f, "Comprehensive"),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Parser, Serialize, Deserialize)]
@@ -192,6 +180,20 @@ pub struct Config {
         env = "DISCORD_WEBHOOK"
     )]
     pub discord_webhook: Option<String>,
+    #[clap(
+        long,
+        value_name = "TELEGRAM_TOKEN",
+        help = "Telegram Bot API Token",
+        env = "TELEGRAM_TOKEN"
+    )]
+    pub telegram_token: Option<String>,
+    #[clap(
+        long,
+        value_name = "TELEGRAM_CHAT_ID",
+        help = "Id of Telegram chat (DM or group) to send messages to",
+        env = "TELEGRAM_CHAT_ID"
+    )]
+    pub telegram_chat_id: Option<i64>,
     #[clap(
         long,
         value_name = "METRICS_HOST",
