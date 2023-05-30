@@ -1,33 +1,28 @@
+use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex as SyncMutex};
 use std::{
     collections::HashMap,
     fs::{remove_file, File},
     io::{BufReader, Write},
 };
+use tracing::warn;
 
 use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
 
-use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex as SyncMutex};
-use tokio::sync::Mutex as AsyncMutex;
-use tracing::warn;
+use crate::{operator::attestation::Attestation, RadioPayloadMessage};
 
-use crate::{attestation::Attestation, RadioPayloadMessage};
-
-type Local = Arc<AsyncMutex<HashMap<String, HashMap<u64, Attestation>>>>;
+type Local = Arc<SyncMutex<HashMap<String, HashMap<u64, Attestation>>>>;
 type Remote = Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PersistedState {
-    local_attestations: HashMap<String, HashMap<u64, Attestation>>,
-    remote_messages: Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>,
+    local_attestations: Local,
+    remote_messages: Remote,
 }
 
 impl PersistedState {
-    pub fn new(
-        local: Option<HashMap<String, HashMap<u64, Attestation>>>,
-        remote: Option<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>>,
-    ) -> PersistedState {
-        let local_attestations = local.unwrap_or(HashMap::new());
+    pub fn new(local: Option<Local>, remote: Option<Remote>) -> PersistedState {
+        let local_attestations = local.unwrap_or(Arc::new(SyncMutex::new(HashMap::new())));
         let remote_messages = remote.unwrap_or(Arc::new(SyncMutex::new(vec![])));
 
         PersistedState {
@@ -38,15 +33,14 @@ impl PersistedState {
 
     /// Optional updates for either local_attestations or remote_messages without requiring either to be in-scope
     pub async fn update(
-        &self,
+        &mut self,
         local_attestations: Option<Local>,
         remote_messages: Option<Remote>,
     ) -> PersistedState {
-        let local_attestations: HashMap<String, HashMap<u64, Attestation>> =
-            match local_attestations {
-                None => self.local_attestations.clone(),
-                Some(l) => l.lock().await.clone(),
-            };
+        let local_attestations = match local_attestations {
+            None => self.local_attestations.clone(),
+            Some(l) => l,
+        };
         let remote_messages = match remote_messages {
             None => self.remote_messages.clone(),
             Some(r) => r,
@@ -57,14 +51,29 @@ impl PersistedState {
         }
     }
 
+    /// Updates for local_attestations
+    pub async fn update_local(&mut self, local_attestations: Local) {
+        self.local_attestations = local_attestations;
+    }
+
+    /// Updates for remote_messages
+    pub async fn update_remote(&mut self, remote_messages: Remote) {
+        self.remote_messages = remote_messages;
+    }
+
+    /// Updates for remote_messages
+    pub async fn add_remote_message(&mut self, msg: GraphcastMessage<RadioPayloadMessage>) {
+        self.remote_messages.lock().unwrap().push(msg)
+    }
+
     /// Getter for local_attestations
-    pub fn local_attestations(&self) -> HashMap<String, HashMap<u64, Attestation>> {
+    pub fn local_attestations(&self) -> Arc<SyncMutex<HashMap<String, HashMap<u64, Attestation>>>> {
         self.local_attestations.clone()
     }
 
     /// Getter for one local_attestation
     pub fn local_attestation(&self, deployment: String, block_number: u64) -> Option<Attestation> {
-        match self.local_attestations.get(&deployment) {
+        match self.local_attestations.lock().unwrap().get(&deployment) {
             None => None,
             Some(blocks_map) => blocks_map.get(&block_number).cloned(),
         }
@@ -135,7 +144,7 @@ impl PersistedState {
 mod tests {
     use graphcast_sdk::networks::NetworkName;
 
-    use crate::attestation::save_local_attestation;
+    use crate::operator::attestation::save_local_attestation;
 
     use super::*;
 
@@ -146,34 +155,31 @@ mod tests {
         PersistedState::delete_cache(path);
 
         let mut state = PersistedState::load_cache(path);
-        assert!(state.local_attestations.is_empty());
+        assert!(state.local_attestations.lock().unwrap().is_empty());
         assert!(state.remote_messages.lock().unwrap().is_empty());
 
-        let local_attestations = Arc::new(AsyncMutex::new(HashMap::new()));
+        let local_attestations = Arc::new(SyncMutex::new(HashMap::new()));
         let messages = Arc::new(SyncMutex::new(Vec::new()));
         save_local_attestation(
             local_attestations.clone(),
             "npoi-x".to_string(),
             "0xa1".to_string(),
             0,
-        )
-        .await;
+        );
 
         save_local_attestation(
             local_attestations.clone(),
             "npoi-y".to_string(),
             "0xa1".to_string(),
             1,
-        )
-        .await;
+        );
 
         save_local_attestation(
             local_attestations.clone(),
             "npoi-z".to_string(),
             "0xa2".to_string(),
             2,
-        )
-        .await;
+        );
 
         let hash: String = "QmWECgZdP2YMcV9RtKU41GxcdW8EGYqMNoG98ubu5RGN6U".to_string();
         let content: String =
@@ -202,13 +208,33 @@ mod tests {
 
         let state = PersistedState::load_cache(path);
         assert!(state.remote_messages.lock().unwrap().len() == 1);
-        assert!(!state.local_attestations.is_empty());
-        assert!(state.local_attestations.len() == 2);
-        assert!(state.local_attestations.get("0xa1").unwrap().len() == 2);
-        assert!(state.local_attestations.get("0xa2").unwrap().len() == 1);
+        assert!(!state.local_attestations.lock().unwrap().is_empty());
+        assert!(state.local_attestations.lock().unwrap().len() == 2);
         assert!(
             state
                 .local_attestations
+                .lock()
+                .unwrap()
+                .get("0xa1")
+                .unwrap()
+                .len()
+                == 2
+        );
+        assert!(
+            state
+                .local_attestations
+                .lock()
+                .unwrap()
+                .get("0xa2")
+                .unwrap()
+                .len()
+                == 1
+        );
+        assert!(
+            state
+                .local_attestations
+                .lock()
+                .unwrap()
                 .get("0xa1")
                 .unwrap()
                 .get(&0)

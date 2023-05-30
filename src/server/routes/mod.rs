@@ -41,9 +41,7 @@ pub(crate) async fn graphql_handler(
 
     trace!("Processing GraphQL request");
 
-    let local = context.local_attestations().await;
-
-    let response = async move { schema.execute(req.into_inner().data(local)).await }
+    let response = async move { schema.execute(req.into_inner().data(context)).await }
         .instrument(span.clone())
         .await;
 

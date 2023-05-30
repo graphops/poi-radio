@@ -1,8 +1,8 @@
+use graphcast_sdk::graphql::QueryError;
 use graphql_client::{GraphQLQuery, Response};
 use serde_derive::{Deserialize, Serialize};
 
 // Maybe later on move graphql to SDK as the queries are pretty standarded
-use graphcast_sdk::graphql::QueryError;
 
 /// Derived GraphQL Query to Proof of Indexing
 #[derive(GraphQLQuery, Serialize, Deserialize, Debug)]

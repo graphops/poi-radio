@@ -1,7 +1,12 @@
+use std::collections::HashSet;
+
+use autometrics::autometrics;
 use clap::Parser;
+use derive_getters::Getters;
 use ethers::signers::WalletError;
 use graphcast_sdk::{
     build_wallet,
+    callbook::CallBook,
     graphcast_agent::{GraphcastAgent, GraphcastAgentConfig, GraphcastAgentError},
     graphcast_id_address,
     graphql::{
@@ -12,17 +17,18 @@ use graphcast_sdk::{
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use crate::radio_name;
 use crate::state::PersistedState;
+use crate::{active_allocation_hashes, syncing_deployment_hashes};
 
-#[derive(clap::ValueEnum, Clone, Debug, Serialize, Deserialize)]
+#[derive(clap::ValueEnum, Clone, Debug, Serialize, Deserialize, Default)]
 pub enum CoverageLevel {
     Minimal,
+    #[default]
     OnChain,
     Comprehensive,
 }
 
-#[derive(Clone, Debug, Parser, Serialize, Deserialize)]
+#[derive(Clone, Debug, Parser, Serialize, Deserialize, Getters, Default)]
 #[clap(
     name = "poi-radio",
     about = "Cross-check POIs with other Indexer in real time",
@@ -198,10 +204,11 @@ pub struct Config {
     #[clap(
         long,
         value_name = "METRICS_HOST",
-        help = "If set, the Radio will expose Prometheus metrics on the given host (off by default). This requires having a local Prometheus server running and scraping metrics on the given port.",
+        default_value = "0.0.0.0",
+        help = "If port is set, the Radio will expose Prometheus metrics on the given host. This requires having a local Prometheus server running and scraping metrics on the given port.",
         env = "METRICS_HOST"
     )]
-    pub metrics_host: Option<String>,
+    pub metrics_host: String,
     #[clap(
         long,
         value_name = "METRICS_PORT",
@@ -212,10 +219,11 @@ pub struct Config {
     #[clap(
         long,
         value_name = "SERVER_HOST",
-        help = "If set, the Radio will expose API service on the given host (off by default).",
+        default_value = "0.0.0.0",
+        help = "If port is set, the Radio will expose API service on the given host.",
         env = "SERVER_HOST"
     )]
-    pub server_host: Option<String>,
+    pub server_host: String,
     #[clap(
         long,
         value_name = "SERVER_PORT",
@@ -240,6 +248,13 @@ pub struct Config {
         default_value = "pretty"
     )]
     pub log_format: String,
+    #[clap(
+        long,
+        value_name = "RADIO_NAME",
+        env = "RADIO_NAME",
+        default_value = "poi-radio"
+    )]
+    pub radio_name: String,
 }
 
 impl Config {
@@ -275,14 +290,13 @@ impl Config {
 
     pub async fn to_graphcast_agent_config(
         &self,
-        radio_name: &'static str,
     ) -> Result<GraphcastAgentConfig, GraphcastAgentError> {
         let wallet_key = self.wallet_input().unwrap().to_string();
         let topics = self.topics.clone();
 
         GraphcastAgentConfig::new(
             wallet_key,
-            radio_name,
+            self.radio_name.clone(),
             self.registry_subgraph.clone(),
             self.network_subgraph.clone(),
             self.graph_node_endpoint.clone(),
@@ -299,15 +313,18 @@ impl Config {
 
     pub async fn basic_info(&self) -> Result<(String, f32), QueryError> {
         // Using unwrap directly as the query has been ran in the set-up validation
-        let wallet = build_wallet(self.wallet_input().unwrap()).unwrap();
+        let wallet = build_wallet(
+            self.wallet_input()
+                .map_err(|e| QueryError::Other(e.into()))?,
+        )
+        .map_err(|e| QueryError::Other(e.into()))?;
         // The query here must be Ok but so it is okay to panic here
         // Alternatively, make validate_set_up return wallet, address, and stake
         let my_address = query_registry_indexer(
             self.registry_subgraph.to_string(),
             graphcast_id_address(&wallet),
         )
-        .await
-        .unwrap();
+        .await?;
         let my_stake =
             query_network_subgraph(self.network_subgraph.to_string(), my_address.clone())
                 .await
@@ -339,8 +356,55 @@ impl Config {
     }
 
     pub async fn create_graphcast_agent(&self) -> Result<GraphcastAgent, GraphcastAgentError> {
-        let config = self.to_graphcast_agent_config(radio_name()).await.unwrap();
+        let config = self.to_graphcast_agent_config().await.unwrap();
         GraphcastAgent::new(config).await
+    }
+
+    pub fn callbook(&self) -> CallBook {
+        CallBook::new(
+            self.graph_node_endpoint.clone(),
+            self.registry_subgraph.clone(),
+            self.network_subgraph.clone(),
+        )
+    }
+
+    /// Generate a set of unique topics along with given static topics
+    #[autometrics]
+    pub async fn generate_topics(&self, indexer_address: String) -> Vec<String> {
+        let static_topics = HashSet::from_iter(self.topics().to_vec());
+        let topics = match self.coverage {
+            CoverageLevel::Minimal => static_topics,
+            CoverageLevel::OnChain => {
+                let mut topics: HashSet<String> = active_allocation_hashes(
+                    self.callbook().graph_network(),
+                    indexer_address.clone(),
+                )
+                .await
+                .into_iter()
+                .collect();
+                topics.extend(static_topics);
+                topics
+            }
+            CoverageLevel::Comprehensive => {
+                let active_topics: HashSet<String> = active_allocation_hashes(
+                    self.callbook().graph_network(),
+                    indexer_address.clone(),
+                )
+                .await
+                .into_iter()
+                .collect();
+                let mut additional_topics: HashSet<String> =
+                    syncing_deployment_hashes(self.graph_node_endpoint())
+                        .await
+                        .into_iter()
+                        .collect();
+
+                additional_topics.extend(active_topics);
+                additional_topics.extend(static_topics);
+                additional_topics
+            }
+        };
+        topics.into_iter().collect::<Vec<String>>()
     }
 }
 

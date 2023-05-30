@@ -7,9 +7,9 @@ use sha3::{Digest, Sha3_256};
 use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Display},
-    sync::Arc,
+    sync::{Arc, Mutex as SyncMutex},
 };
-use tokio::sync::Mutex as AsyncMutex;
+
 use tracing::{debug, error, info, trace, warn};
 
 use graphcast_sdk::{
@@ -21,9 +21,10 @@ use crate::{
     metrics::{
         ACTIVE_INDEXERS, DIVERGING_SUBGRAPHS, INDEXER_COUNT_BY_NPOI, LOCAL_NPOIS_TO_COMPARE,
     },
-    notifier::Notifier,
     OperationError, RadioPayloadMessage,
 };
+
+use super::Notifier;
 
 /// A wrapper around an attested NPOI, tracks Indexers that have sent it plus their accumulated stake
 #[derive(Clone, Debug, PartialEq, Eq, Hash, SimpleObject, Serialize, Deserialize)]
@@ -92,12 +93,12 @@ pub struct AttestationEntry {
     pub attestation: Attestation,
 }
 
-pub async fn attestations_to_vec(
-    attestations: &Arc<AsyncMutex<LocalAttestationsMap>>,
+pub fn attestations_to_vec(
+    attestations: &Arc<SyncMutex<LocalAttestationsMap>>,
 ) -> Vec<AttestationEntry> {
     attestations
         .lock()
-        .await
+        .unwrap()
         .iter()
         .flat_map(|(npoi, inner_map)| {
             inner_map.iter().map(move |(blk, att)| AttestationEntry {
@@ -109,9 +110,6 @@ pub async fn attestations_to_vec(
         .collect()
 }
 
-/// This function processes the global messages map that we populate when
-/// messages are being received. It constructs the remote attestations
-/// map and returns it if the processing succeeds.
 #[autometrics]
 pub async fn process_messages(
     messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
@@ -205,12 +203,12 @@ pub fn combine_senders(attestations: &[Attestation]) -> Vec<String> {
 
 /// Determine the comparison pointer on both block and time based on the local attestations
 /// If they don't exist, then return default value that shall never be validated to trigger
-pub async fn local_comparison_point(
-    local_attestations: Arc<AsyncMutex<LocalAttestationsMap>>,
+pub fn local_comparison_point(
+    local_attestations: Arc<SyncMutex<LocalAttestationsMap>>,
     id: String,
     collect_window_duration: i64,
 ) -> Option<(u64, i64)> {
-    let local_attestations = local_attestations.lock().await;
+    let local_attestations = local_attestations.lock().unwrap();
     if let Some(blocks_map) = local_attestations.get(&id) {
         // Find the attestaion by the smallest block
         blocks_map
@@ -254,20 +252,15 @@ pub fn update_blocks(
 }
 
 /// Saves NPOIs that we've generated locally, in order to compare them with remote ones later
-pub async fn save_local_attestation(
-    local_attestations: Arc<AsyncMutex<LocalAttestationsMap>>,
+pub fn save_local_attestation(
+    local_attestations: Arc<SyncMutex<LocalAttestationsMap>>,
     content: String,
     ipfs_hash: String,
     block_number: u64,
 ) {
-    let attestation = Attestation::new(
-        content.clone(),
-        Zero::zero(),
-        vec![],
-        vec![Utc::now().timestamp()],
-    );
+    let attestation = Attestation::new(content, Zero::zero(), vec![], vec![Utc::now().timestamp()]);
 
-    let mut local_attestations = local_attestations.lock().await;
+    let mut local_attestations = local_attestations.lock().unwrap();
     let blocks = local_attestations.get(&ipfs_hash);
 
     match blocks {
@@ -292,32 +285,24 @@ pub async fn save_local_attestation(
 }
 
 /// Clear the expired local attestations after comparing with remote results
-pub async fn clear_local_attestation(
-    local_attestations: Arc<AsyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
+pub fn clear_local_attestation(
+    local_attestations: Arc<SyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
     ipfs_hash: String,
     block_number: u64,
 ) {
-    let mut local_attestations = local_attestations.lock().await;
-    let blocks = local_attestations.get(&ipfs_hash.clone());
+    let mut local_attestations = local_attestations.lock().unwrap();
+    let blocks = local_attestations.get(&ipfs_hash);
 
     if let Some(blocks) = blocks {
         let mut blocks_clone: HashMap<u64, Attestation> = HashMap::new();
         blocks_clone.extend(blocks.clone());
         blocks_clone.remove(&block_number);
-        let npoi_gauge = LOCAL_NPOIS_TO_COMPARE.with_label_values(&[&ipfs_hash.clone()]);
+        let npoi_gauge = LOCAL_NPOIS_TO_COMPARE.with_label_values(&[&ipfs_hash]);
         // The value is the total number of senders that are attesting for that subgraph
         npoi_gauge.set(blocks_clone.len().try_into().unwrap());
-        local_attestations.insert(ipfs_hash.clone(), blocks_clone);
+        local_attestations.insert(ipfs_hash, blocks_clone);
     };
 }
-
-//TODO: add as a function of global state
-// /// Clear the expired local attestations after comparing with remote results
-// pub async fn clear_local_attestations(local_attestations: Arc<AsyncMutex<LocalAttestationsMap>>,
-// ) {
-
-//     _ = local_attestations.set(Arc::new(AsyncMutex::new(HashMap::new())));
-// }
 
 /// Tracks results indexed by deployment hash and block number
 #[derive(Enum, Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -437,7 +422,7 @@ impl Clone for ComparisonResult {
 pub async fn compare_attestations(
     attestation_block: u64,
     remote: RemoteAttestationsMap,
-    local: Arc<AsyncMutex<LocalAttestationsMap>>,
+    local: Arc<SyncMutex<LocalAttestationsMap>>,
     ipfs_hash: &str,
 ) -> ComparisonResult {
     trace!(
@@ -446,7 +431,7 @@ pub async fn compare_attestations(
         "Comparing attestations",
     );
 
-    let local = local.lock().await;
+    let local = local.lock().unwrap();
 
     let blocks = match local.get(ipfs_hash) {
         Some(blocks) => blocks,
@@ -653,7 +638,6 @@ pub async fn process_comparison_results(
                     notifier.clone().notify(x.to_string()).await;
                     divergent_subgraphs.insert(x.deployment.clone());
                 }
-
                 divergent_strings.push(x.to_string());
             }
             Ok(x) => attestation_failed.push(x.to_string()),
@@ -695,8 +679,6 @@ impl ErrorExtensions for AttestationError {
 
 #[cfg(test)]
 mod tests {
-    use crate::{radio_name, CONFIG};
-
     use super::*;
 
     // TODO: add setup and teardown functions
@@ -848,7 +830,7 @@ mod tests {
         let res = compare_attestations(
             42,
             HashMap::new(),
-            Arc::new(AsyncMutex::new(HashMap::new())),
+            Arc::new(SyncMutex::new(HashMap::new())),
             "non-existent-ipfs-hash",
         )
         .await;
@@ -890,7 +872,7 @@ mod tests {
         let res = compare_attestations(
             42,
             remote_attestations,
-            Arc::new(AsyncMutex::new(local_attestations)),
+            Arc::new(SyncMutex::new(local_attestations)),
             "different-awesome-hash",
         )
         .await;
@@ -917,7 +899,7 @@ mod tests {
         let res = compare_attestations(
             42,
             remote_attestations,
-            Arc::new(AsyncMutex::new(local_attestations)),
+            Arc::new(SyncMutex::new(local_attestations)),
             "my-awesome-hash",
         )
         .await;
@@ -954,7 +936,7 @@ mod tests {
         let res = compare_attestations(
             42,
             remote_attestations,
-            Arc::new(AsyncMutex::new(local_attestations)),
+            Arc::new(SyncMutex::new(local_attestations)),
             "my-awesome-hash",
         )
         .await;
@@ -1002,13 +984,19 @@ mod tests {
         let mut local_attestations: HashMap<String, HashMap<u64, Attestation>> = HashMap::new();
         local_attestations.insert("hash".to_string(), local_blocks.clone());
         local_attestations.insert("hash2".to_string(), local_blocks);
-        let local = Arc::new(AsyncMutex::new(local_attestations));
+        let local = Arc::new(SyncMutex::new(local_attestations));
 
-        clear_local_attestation(Arc::clone(&local), "hash".to_string(), 43).await;
+        clear_local_attestation(Arc::clone(&local), "hash".to_string(), 43);
 
-        assert_eq!(local.lock().await.get("hash").unwrap().len(), 2);
-        assert!(local.lock().await.get("hash").unwrap().get(&43).is_none());
-        assert_eq!(local.lock().await.get("hash2").unwrap().len(), 3);
+        assert_eq!(local.lock().unwrap().get("hash").unwrap().len(), 2);
+        assert!(local
+            .lock()
+            .unwrap()
+            .get("hash")
+            .unwrap()
+            .get(&43)
+            .is_none());
+        assert_eq!(local.lock().unwrap().get("hash2").unwrap().len(), 3);
     }
 
     #[tokio::test]
@@ -1042,11 +1030,9 @@ mod tests {
         let mut local_attestations: HashMap<String, HashMap<u64, Attestation>> = HashMap::new();
         local_attestations.insert("hash".to_string(), local_blocks.clone());
         local_attestations.insert("hash2".to_string(), local_blocks);
-        let local = Arc::new(AsyncMutex::new(local_attestations));
+        let local = Arc::new(SyncMutex::new(local_attestations));
         let (block_num, collect_window_end) =
-            local_comparison_point(local, "hash".to_string(), 120)
-                .await
-                .unwrap();
+            local_comparison_point(local, "hash".to_string(), 120).unwrap();
 
         assert_eq!(block_num, 42);
         assert_eq!(collect_window_end, 122);
@@ -1054,39 +1040,52 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_local_attestation() {
-        let local_attestations = Arc::new(AsyncMutex::new(HashMap::new()));
+        let local_attestations = Arc::new(SyncMutex::new(HashMap::new()));
         save_local_attestation(
             local_attestations.clone(),
             "npoi-x".to_string(),
             "0xa1".to_string(),
             0,
-        )
-        .await;
+        );
 
         save_local_attestation(
             local_attestations.clone(),
             "npoi-y".to_string(),
             "0xa1".to_string(),
             1,
-        )
-        .await;
+        );
 
         save_local_attestation(
             local_attestations.clone(),
             "npoi-z".to_string(),
             "0xa2".to_string(),
             2,
-        )
-        .await;
+        );
 
-        assert!(!local_attestations.lock().await.is_empty());
-        assert!(local_attestations.lock().await.len() == 2);
-        assert!(local_attestations.lock().await.get("0xa1").unwrap().len() == 2);
-        assert!(local_attestations.lock().await.get("0xa2").unwrap().len() == 1);
+        assert!(!local_attestations.lock().unwrap().is_empty());
+        assert!(local_attestations.lock().unwrap().len() == 2);
         assert!(
             local_attestations
                 .lock()
-                .await
+                .unwrap()
+                .get("0xa1")
+                .unwrap()
+                .len()
+                == 2
+        );
+        assert!(
+            local_attestations
+                .lock()
+                .unwrap()
+                .get("0xa2")
+                .unwrap()
+                .len()
+                == 1
+        );
+        assert!(
+            local_attestations
+                .lock()
+                .unwrap()
                 .get("0xa1")
                 .unwrap()
                 .get(&0)

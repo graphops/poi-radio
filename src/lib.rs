@@ -1,7 +1,5 @@
 use async_graphql::{Error, ErrorExtensions, SimpleObject};
-
 use autometrics::autometrics;
-use config::{Config, CoverageLevel};
 use ethers_contract::EthAbiType;
 use ethers_core::types::transaction::eip712::Eip712;
 use ethers_derive_eip712::*;
@@ -9,36 +7,32 @@ use once_cell::sync::OnceCell;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex as SyncMutex,
     },
 };
 use tokio::signal;
-use tracing::{error, trace};
+use tracing::error;
 
 use graphcast_sdk::{
-    graphcast_agent::GraphcastAgentError, graphql::client_graph_node::get_indexing_statuses,
+    graphcast_agent::GraphcastAgentError,
+    graphql::{client_graph_node::get_indexing_statuses, QueryError},
 };
 use graphcast_sdk::{
-    graphcast_agent::{
-        message_typing::GraphcastMessage, waku_handling::WakuHandlingError, GraphcastAgent,
-    },
+    graphcast_agent::{message_typing::GraphcastMessage, GraphcastAgent},
     graphql::client_network::query_network_subgraph,
     networks::NetworkName,
     BlockPointer,
 };
 
-use crate::attestation::AttestationError;
-use crate::metrics::{CACHED_MESSAGES, VALIDATED_MESSAGES};
+use crate::operator::attestation::AttestationError;
 
-pub mod attestation;
 pub mod config;
 pub mod graphql;
 pub mod metrics;
-pub mod notifier;
-pub mod operation;
+pub mod operator;
 pub mod server;
 pub mod state;
 
@@ -46,17 +40,7 @@ pub type MessagesVec = OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadM
 
 /// A global static (singleton) instance of GraphcastAgent. It is useful to ensure that we have only one GraphcastAgent
 /// per Radio instance, so that we can keep track of state and more easily test our Radio application.
-pub static GRAPHCAST_AGENT: OnceCell<GraphcastAgent> = OnceCell::new();
-
-/// A global static (singleton) instance of A GraphcastMessage vector.
-/// It is used to save incoming messages after they've been validated, in order
-/// defer their processing for later, because async code is required for the processing but
-/// it is not allowed in the handler itself.
-pub static MESSAGES: OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>> =
-    OnceCell::new();
-
-/// Radio's global config
-pub static CONFIG: OnceCell<Arc<SyncMutex<Config>>> = OnceCell::new();
+pub static GRAPHCAST_AGENT: OnceCell<Arc<GraphcastAgent>> = OnceCell::new();
 
 pub fn radio_name() -> &'static str {
     "poi-radio"
@@ -86,33 +70,6 @@ impl RadioPayloadMessage {
 
     pub fn payload_content(&self) -> String {
         self.content.clone()
-    }
-}
-
-/// Custom callback for handling the validated GraphcastMessage, in this case we only save the messages to a local store
-/// to process them at a later time. This is required because for the processing we use async operations which are not allowed
-/// in the handler.
-#[autometrics]
-pub fn radio_msg_handler(
-) -> impl Fn(Result<GraphcastMessage<RadioPayloadMessage>, WakuHandlingError>) {
-    |msg: Result<GraphcastMessage<RadioPayloadMessage>, WakuHandlingError>| {
-        // TODO: Handle the error case by incrementing a Prometheus "error" counter
-        if let Ok(msg) = msg {
-            trace!(msg = tracing::field::debug(&msg), "Received message");
-            let id = msg.identifier.clone();
-            VALIDATED_MESSAGES.with_label_values(&[&id]).inc();
-            MESSAGES.get().unwrap().lock().unwrap().push(msg);
-            CACHED_MESSAGES.with_label_values(&[&id]).set(
-                MESSAGES
-                    .get()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .len()
-                    .try_into()
-                    .unwrap(),
-            );
-        }
     }
 }
 
@@ -149,49 +106,6 @@ pub async fn syncing_deployment_hashes(
         .filter(|&status| status.node.is_some() && status.node != Some(String::from("removed")))
         .map(|s| s.subgraph.clone())
         .collect::<Vec<String>>()
-}
-
-/// Generate a set of unique topics along with given static topics
-#[autometrics]
-pub async fn generate_topics(
-    coverage: CoverageLevel,
-    network_subgraph: String,
-    indexer_address: String,
-    graph_node_endpoint: String,
-    static_topics: &Vec<String>,
-) -> Vec<String> {
-    match coverage {
-        CoverageLevel::Minimal => static_topics.to_vec(),
-        CoverageLevel::OnChain => {
-            let mut topics = active_allocation_hashes(&network_subgraph, indexer_address).await;
-            for topic in static_topics {
-                if !topics.contains(topic) {
-                    topics.push(topic.clone());
-                }
-            }
-            topics
-        }
-        CoverageLevel::Comprehensive => {
-            let active_topics: HashSet<String> =
-                active_allocation_hashes(&network_subgraph, indexer_address)
-                    .await
-                    .into_iter()
-                    .collect();
-            let additional_topics: HashSet<String> =
-                syncing_deployment_hashes(&graph_node_endpoint)
-                    .await
-                    .into_iter()
-                    .collect();
-
-            let mut combined_topics: Vec<String> = static_topics.clone();
-            combined_topics.extend(
-                active_topics
-                    .into_iter()
-                    .chain(additional_topics.into_iter()),
-            );
-            combined_topics
-        }
-    }
 }
 
 /// This function returns the string representation of a set of network mapped to their chainhead blocks
@@ -249,6 +163,8 @@ pub enum OperationError {
     CompareTrigger(String, u64, String),
     #[error("Agent encountered problems: {0}")]
     Agent(GraphcastAgentError),
+    #[error("Failed to query: {0}")]
+    Query(QueryError),
     #[error("Attestation failure: {0}")]
     Attestation(AttestationError),
     #[error("Others: {0}")]
@@ -271,82 +187,5 @@ impl OperationError {
 impl ErrorExtensions for OperationError {
     fn extend(&self) -> Error {
         Error::new(format!("{}", self))
-    }
-}
-
-pub fn clear_all_messages() {
-    _ = MESSAGES.set(Arc::new(SyncMutex::new(vec![])));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const NETWORK: NetworkName = NetworkName::Goerli;
-
-    #[test]
-    fn test_add_message() {
-        _ = MESSAGES.set(Arc::new(SyncMutex::new(Vec::new())));
-        let mut messages = MESSAGES.get().unwrap().lock().unwrap();
-
-        let hash: String = "QmWECgZdP2YMcV9RtKU41GxcdW8EGYqMNoG98ubu5RGN6U".to_string();
-        let content: String =
-            "0xa6008cea5905b8b7811a68132feea7959b623188e2d6ee3c87ead7ae56dd0eae".to_string();
-        let nonce: i64 = 123321;
-        let block_number: u64 = 0;
-        let block_hash: String = "0xblahh".to_string();
-
-        let radio_msg = RadioPayloadMessage::new(hash.clone(), content);
-        let sig: String = "4be6a6b7f27c4086f22e8be364cbdaeddc19c1992a42b08cbe506196b0aafb0a68c8c48a730b0e3155f4388d7cc84a24b193d091c4a6a4e8cd6f1b305870fae61b".to_string();
-        let msg = GraphcastMessage::new(
-            hash,
-            Some(radio_msg),
-            nonce,
-            NETWORK,
-            block_number,
-            block_hash,
-            sig,
-        )
-        .expect("Shouldn't get here since the message is purposefully constructed for testing");
-
-        assert!(messages.is_empty());
-
-        messages.push(msg);
-        assert_eq!(
-            messages.first().unwrap().identifier,
-            "QmWECgZdP2YMcV9RtKU41GxcdW8EGYqMNoG98ubu5RGN6U".to_string()
-        );
-    }
-
-    #[test]
-    fn test_delete_messages() {
-        _ = MESSAGES.set(Arc::new(SyncMutex::new(Vec::new())));
-
-        let mut messages = MESSAGES.get().unwrap().lock().unwrap();
-
-        let hash: String = "QmWECgZdP2YMcV9RtKU41GxcdW8EGYqMNoG98ubu5RGN6U".to_string();
-        let content: String =
-            "0xa6008cea5905b8b7811a68132feea7959b623188e2d6ee3c87ead7ae56dd0eae".to_string();
-        let nonce: i64 = 123321;
-        let block_number: u64 = 0;
-        let block_hash: String = "0xblahh".to_string();
-        let radio_msg = RadioPayloadMessage::new(hash.clone(), content);
-        let sig: String = "4be6a6b7f27c4086f22e8be364cbdaeddc19c1992a42b08cbe506196b0aafb0a68c8c48a730b0e3155f4388d7cc84a24b193d091c4a6a4e8cd6f1b305870fae61b".to_string();
-        let msg = GraphcastMessage::new(
-            hash,
-            Some(radio_msg),
-            nonce,
-            NETWORK,
-            block_number,
-            block_hash,
-            sig,
-        )
-        .expect("Shouldn't get here since the message is purposefully constructed for testing");
-
-        messages.push(msg);
-        assert!(!messages.is_empty());
-
-        messages.clear();
-        assert!(messages.is_empty());
     }
 }

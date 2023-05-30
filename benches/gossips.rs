@@ -1,28 +1,25 @@
 use criterion::async_executor::FuturesExecutor;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use poi_radio::operator::RadioOperator;
+
 use rand::{thread_rng, Rng};
 use secp256k1::SecretKey;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex as SyncMutex};
-use tokio::sync::Mutex as AsyncMutex;
 
 use graphcast_sdk::networks::NetworkName;
 use graphcast_sdk::{BlockPointer, NetworkPointer};
-use poi_radio::attestation::LocalAttestationsMap;
-use poi_radio::operation::gossip_poi;
-use poi_radio::{config::Config, CONFIG};
+use poi_radio::config::Config;
 
 fn gossip_poi_bench(c: &mut Criterion) {
     let identifiers = black_box(vec!["identifier1".to_string(), "identifier2".to_string()]);
-    let network_chainhead_blocks: Arc<AsyncMutex<HashMap<NetworkName, BlockPointer>>> =
-        black_box(Arc::new(AsyncMutex::new(Default::default())));
+    let network_chainhead_blocks: HashMap<NetworkName, BlockPointer> =
+        black_box(Default::default());
     let subgraph_network_latest_blocks: HashMap<String, NetworkPointer> =
         black_box(Default::default());
-    let local_attestations: Arc<AsyncMutex<LocalAttestationsMap>> =
-        black_box(Arc::new(AsyncMutex::new(Default::default())));
     let pk = black_box(generate_random_private_key());
 
     let config = black_box(Config {
+        radio_name: String::from("test"),
         graph_node_endpoint: String::from("http://localhost:8030/graphql"),
         private_key: Some(pk.display_secret().to_string()),
         mnemonic: None,
@@ -48,24 +45,24 @@ fn gossip_poi_bench(c: &mut Criterion) {
         discord_webhook: None,
         telegram_token: None,
         telegram_chat_id: None,
-        metrics_host: None,
+        metrics_host: String::from("0.0.0.0"),
         metrics_port: None,
-        server_host: None,
+        server_host: String::from("0.0.0.0"),
         server_port: None,
         log_format: String::from("pretty"),
         persistence_file_path: None,
     });
-    _ = black_box(CONFIG.set(Arc::new(SyncMutex::new(config))));
 
     c.bench_function("gossip_poi", move |b| {
         b.to_async(FuturesExecutor).iter(|| async {
-            gossip_poi(
-                identifiers.clone(),
-                &network_chainhead_blocks,
-                &subgraph_network_latest_blocks,
-                local_attestations.clone(),
-            )
-            .await
+            RadioOperator::new(config.clone())
+                .await
+                .gossip_poi(
+                    identifiers.clone(),
+                    &network_chainhead_blocks,
+                    &subgraph_network_latest_blocks,
+                )
+                .await
         })
     });
 }

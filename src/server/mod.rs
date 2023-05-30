@@ -1,16 +1,19 @@
 use axum::{extract::Extension, routing::get, Router, Server};
-
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-use tokio::sync::Mutex as AsyncMutex;
-use tracing::info;
+use std::sync::{Arc, Mutex as SyncMutex};
+use tracing::{debug, info};
 
-use crate::attestation::LocalAttestationsMap;
-use crate::server::model::{build_schema, POIRadioContext};
-use crate::server::routes::{graphql_handler, graphql_playground, health};
-use crate::{shutdown_signal, CONFIG};
+use crate::{
+    config::Config,
+    server::{
+        model::{build_schema, POIRadioContext},
+        routes::{graphql_handler, graphql_playground, health},
+    },
+    shutdown_signal,
+    state::PersistedState,
+};
 
 pub mod model;
 pub mod routes;
@@ -20,25 +23,20 @@ pub mod routes;
 /// and a versioned GraphQL endpoint at `api/v1/graphql`
 /// This function starts a API server at the configured server_host and server_port
 pub async fn run_server(
+    config: Config,
+    persisted_state: Arc<SyncMutex<PersistedState>>,
     running_program: Arc<AtomicBool>,
-    local_attestations: Arc<AsyncMutex<LocalAttestationsMap>>,
 ) {
-    info!("Initializing HTTP server");
-    let host = CONFIG
-        .get()
-        .unwrap()
-        .lock()
-        .unwrap()
-        .server_host
-        .clone()
-        .unwrap_or(String::from("0.0.0.0"));
-    let port = CONFIG.get().unwrap().lock().unwrap().server_port.unwrap();
-
-    let context = Arc::new(POIRadioContext::init(Arc::clone(&local_attestations)).await);
+    if config.server_port().is_none() {
+        return;
+    }
+    let port = config.server_port().unwrap();
+    let context =
+        Arc::new(POIRadioContext::init(config.clone(), Arc::clone(&persisted_state)).await);
 
     let schema = build_schema(Arc::clone(&context)).await;
 
-    info!(host, port, "API Service starting");
+    debug!("Setting up HTTP service");
 
     let app = Router::new()
         .route("/health", get(health))
@@ -48,8 +46,13 @@ pub async fn run_server(
         )
         .layer(Extension(schema))
         .layer(Extension(context));
-    let addr = SocketAddr::from_str(&format!("{}:{}", host, port)).expect("Start HTTP Service");
+    let addr = SocketAddr::from_str(&format!("{}:{}", config.server_host(), port))
+        .expect("Create address");
 
+    info!(
+        host = tracing::field::debug(config.server_host()),
+        port, "Bind and serve"
+    );
     Server::bind(&addr)
         .serve(app.into_make_service())
         .with_graceful_shutdown(shutdown_signal(running_program))

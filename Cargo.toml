@@ -18,6 +18,7 @@ chrono = "0.4"
 serde = "1.0.163"
 serde_json = "1.0.96"
 sha3 = "0.10.8"
+derive-getters = "0.2.1"
 tokio = { version = "1.28.1", features = ["full", "rt"] }
 # tokio = { version = "1.28", features = ["full", "tracing", "rt", "parking_lot"] }
 anyhow = "1.0"
