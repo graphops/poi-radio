@@ -2284,7 +2284,7 @@ dependencies = [
 [[package]]
 name = "graphcast-sdk"
 version = "0.3.1"
-source = "git+https://github.com/graphops/graphcast-sdk#20f220aed6540ef96283043036b42e106f435f69"
+source = "git+https://github.com/graphops/graphcast-sdk?branch=hope/discv5#0b4cf20df985c6093c37e1e37f7634136fd057ba"
 dependencies = [
  "anyhow",
  "async-graphql",

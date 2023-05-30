@@ -51,6 +51,8 @@ fn gossip_poi_bench(c: &mut Criterion) {
         server_port: None,
         log_format: String::from("pretty"),
         persistence_file_path: None,
+        discv5_enrs: None,
+        discv5_port: None,
     });
 
     c.bench_function("gossip_poi", move |b| {

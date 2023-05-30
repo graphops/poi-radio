@@ -160,6 +160,20 @@ pub struct Config {
     pub waku_log_level: Option<String>,
     #[clap(
         long,
+        value_name = "DISCV5_ENRS",
+        help = "Comma separated ENRs for Waku discv5 bootstrapping",
+        env = "DISCV5_ENRS"
+    )]
+    pub discv5_enrs: Option<Vec<String>>,
+    #[clap(
+        long,
+        value_name = "DISCV5_PORT",
+        help = "Waku node to expose discoverable udp port",
+        env = "DISCV5_PORT"
+    )]
+    pub discv5_port: Option<u16>,
+    #[clap(
+        long,
         value_name = "LOG_LEVEL",
         default_value = "info",
         help = "logging configurationt to set as RUST_LOG",
@@ -307,6 +321,8 @@ impl Config {
             self.waku_host.clone(),
             self.waku_port.clone(),
             self.waku_addr.clone(),
+            self.discv5_enrs.clone(),
+            self.discv5_port,
         )
         .await
     }
