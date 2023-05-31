@@ -128,7 +128,7 @@ pub async fn main() {
     ));
 
     // Create cleanup struct
-    let _cleanup = Cleanup {
+    let cleanup = Cleanup {
         sender: Arc::clone(&sender),
         radio: Arc::clone(&radio),
     };
@@ -170,6 +170,9 @@ pub async fn main() {
 
     // Wait for 2 minutes asynchronously
     sleep(Duration::from_secs(120)).await;
+
+    let _ = cleanup.sender.lock().unwrap().kill();
+    let _ = cleanup.radio.lock().unwrap().kill();
 
     // Read the content of the state.json file
     let state_file_path = "./test-runner/state.json";
