@@ -38,7 +38,6 @@ pub async fn gossip_set_up(
     id: String,
     network_chainhead_blocks: &HashMap<NetworkName, BlockPointer>,
     subgraph_network_latest_blocks: &HashMap<String, NetworkPointer>,
-    local_attestations: Arc<SyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
 ) -> Result<(NetworkName, BlockPointer, u64), BuildMessageError> {
     // Get the indexing network of the deployment
     // and update the NETWORK message block
@@ -70,12 +69,6 @@ pub async fn gossip_set_up(
         message_block = message_block,
         latest_block = latest_block.number,
         message_countdown_blocks = max(0, message_block as i64 - latest_block.number as i64),
-        topics_waiting_for_next_message_interval = local_attestations
-            .lock()
-            .unwrap()
-            .get(&id.clone())
-            .and_then(|blocks| blocks.get(&message_block))
-            .is_some(),
         "Deployment status",
     );
 
@@ -157,7 +150,7 @@ pub async fn message_send(
             {
                 Ok(msg_id) => {
                     save_local_attestation(
-                        local_attestations,
+                        local_attestations.clone(),
                         content.clone(),
                         id.clone(),
                         message_block,
@@ -380,13 +373,11 @@ impl RadioOperator {
         let mut send_handles = vec![];
         for id in identifiers.clone() {
             /* Set up */
-            let local_attestations =
-                Arc::clone(&self.persisted_state.lock().unwrap().local_attestations());
+            let local_attestations = self.persisted_state.lock().unwrap().local_attestations();
             let (network_name, latest_block, message_block) = if let Ok(params) = gossip_set_up(
                 id.clone(),
                 network_chainhead_blocks,
                 subgraph_network_latest_blocks,
-                Arc::clone(&local_attestations),
             )
             .await
             {
@@ -400,7 +391,6 @@ impl RadioOperator {
             /* Send message */
             let id_cloned = id.clone();
 
-            let local = Arc::clone(&local_attestations);
             let callbook = self.config.callbook();
             let send_handle = tokio::spawn(async move {
                 message_send(
@@ -409,7 +399,7 @@ impl RadioOperator {
                     message_block,
                     latest_block,
                     network_name,
-                    local,
+                    Arc::clone(&local_attestations),
                     GRAPHCAST_AGENT.get().unwrap(),
                 )
                 .await

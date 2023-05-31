@@ -215,14 +215,14 @@ impl RadioOperator {
         let skip_iteration = Arc::new(AtomicBool::new(false));
         let skip_iteration_clone = skip_iteration.clone();
 
-        let mut topic_update_interval = interval(Duration::from_secs(60));
-        let mut state_update_interval = interval(Duration::from_secs(5));
-        let mut gossip_poi_interval = interval(Duration::from_secs(10));
-        let mut comparison_interval = interval(Duration::from_secs(6));
+        let mut topic_update_interval = interval(Duration::from_secs(600));
+        let mut state_update_interval = interval(Duration::from_secs(60));
+        let mut gossip_poi_interval = interval(Duration::from_secs(30));
+        let mut comparison_interval = interval(Duration::from_secs(30));
 
         let iteration_timeout = Duration::from_secs(180);
-        let update_timeout = Duration::from_secs(10);
-        let gossip_timeout = Duration::from_secs(150);
+        let update_timeout = Duration::from_secs(5);
+        let gossip_timeout = Duration::from_secs(120);
 
         // Separate thread to skip a main loop iteration when hit timeout
         tokio::spawn(async move {
