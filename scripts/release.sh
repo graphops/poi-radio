@@ -3,7 +3,7 @@
 set -e
 set -x
 
-VERSION="v$(cargo metadata --quiet --format-version 1 | jq -r '.packages[] | select(.name == "poi-radio") | .version')"
+VERSION="$(cargo metadata --quiet --format-version 1 | jq -r '.packages[] | select(.name == "poi-radio") | .version')"
 
 if [[ -z "$VERSION" ]]; then
   echo "Usage: $0 <version>"
@@ -13,8 +13,8 @@ fi
 git-cliff -o CHANGELOG.md
 
 (
-  git add CHANGELOG.md Cargo.lock Cargo.toml \
-    && git commit -m "chore: release $VERSION"
+  git add CHANGELOG.md Cargo.lock Cargo.toml &&
+    git commit -m "chore: release $VERSION"
 ) || true
 
 # Publish to crates.io
