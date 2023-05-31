@@ -1,7 +1,4 @@
-use std::fs::{DirBuilder, File};
-use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 
 use graphcast_sdk::init_tracing;
@@ -9,7 +6,6 @@ use poi_radio::config::CoverageLevel;
 use poi_radio::state::PersistedState;
 use test_utils::config::test_config;
 use test_utils::mock_server::start_mock_server;
-use tokio::task;
 use tokio::time::{sleep, Duration};
 use tracing::{info, trace};
 
@@ -38,34 +34,12 @@ pub async fn main() {
     let id = uuid::Uuid::new_v4().to_string();
     std::env::set_var("TEST_RUN_ID", &id);
 
-    // Create directories if they don't exist and open the log files
-    let sender_log_file_path = Path::new("logs/sender.log");
-    let radio_log_file_path = Path::new("logs/radio.log");
-
-    let log_files = [&sender_log_file_path, &radio_log_file_path];
-
-    for log_file_path in log_files.iter() {
-        if let Some(directory) = log_file_path.parent() {
-            if !directory.exists() {
-                DirBuilder::new()
-                    .recursive(true)
-                    .create(directory)
-                    .expect("Failed to create directory");
-            }
-        }
-    }
-
-    let sender_log_file =
-        File::create(sender_log_file_path).expect("Failed to open sender log file");
-    let radio_log_file = File::create(radio_log_file_path).expect("Failed to open radio log file");
-
     // Run the 'cargo run --bin sender' command
     let sender = Arc::new(Mutex::new(
         Command::new("cargo")
             .arg("run")
             .arg("--bin")
             .arg("test-sender")
-            .stdout(Stdio::piped())
             .spawn()
             .expect("Failed to start command"),
     ));
@@ -122,7 +96,6 @@ pub async fn main() {
             .arg(&config.log_format)
             .arg("--radio-name")
             .arg(&config.radio_name)
-            .stdout(Stdio::piped())
             .spawn()
             .expect("Failed to start command"),
     ));
@@ -133,44 +106,10 @@ pub async fn main() {
         radio: Arc::clone(&radio),
     };
 
-    let processes = vec![
-        (Arc::clone(&sender), sender_log_file),
-        (Arc::clone(&radio), radio_log_file),
-    ];
-
-    let mut handlers = Vec::new();
-
-    // Handle the output of each process in a new thread
-    for (process, mut log_file) in processes {
-        let process = Arc::clone(&process);
-
-        let handler = task::spawn(async move {
-            let reader = BufReader::new(
-                process
-                    .lock()
-                    .unwrap()
-                    .stdout
-                    .take()
-                    .expect("Failed to capture stdout"),
-            );
-
-            // Read the stdout line by line and write to the corresponding log file
-            for line in reader.lines() {
-                match line {
-                    Ok(line) => {
-                        writeln!(log_file, "{}", line).expect("Failed to write to log file");
-                    }
-                    Err(err) => eprintln!("Error: {}", err),
-                }
-            }
-        });
-
-        handlers.push(handler);
-    }
-
     // Wait for 2 minutes asynchronously
     sleep(Duration::from_secs(120)).await;
 
+    // Kill the processes
     let _ = cleanup.sender.lock().unwrap().kill();
     let _ = cleanup.radio.lock().unwrap().kill();
 
@@ -216,8 +155,4 @@ pub async fn main() {
     }
 
     info!("All checks passed ✅");
-
-    for handler in handlers {
-        let _ = handler.abort_handle();
-    }
 }
