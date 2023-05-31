@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-
 set -e
 set -x
 
@@ -18,4 +17,4 @@ git-cliff -o CHANGELOG.md
 ) || true
 
 # Publish to crates.io
-cargo publish
+cargo publish -p poi-radio

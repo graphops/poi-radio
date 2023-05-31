@@ -9,5 +9,5 @@ boot_node_addr.conf
 data
 *.swp
 .vscode
-poi-radio-e2e-tests
 *.json
+.DS_Store
