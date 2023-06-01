@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [unreleased]
 
+### Features
+
+- Disable notifications for known divergences
+- Add telegram notifications
+- Discv5 configs
+- Add e2e tests
+
+### Miscellaneous Tasks
+
+- Release 0.3.2
+- Release 0.3.2
+
+### Refactor
+
+- Operator struct replaces global mutex
+- Update interval constants
+- Remove 'v' prefix from release tag
+
+## [0.3.1] - 2023-05-22
+
+### Miscellaneous Tasks
+
+- Release v0.3.1
+
 ### Refactor
 
 - Update logging level

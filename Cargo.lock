@@ -2323,6 +2323,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphcast-sdk"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d84298fce0758e65e2ff3673ba34d194170c40dcfd616feaf7be8bf3a17f626"
+dependencies = [
+ "anyhow",
+ "async-graphql",
+ "async-graphql-axum",
+ "chrono",
+ "clap",
+ "data-encoding",
+ "derive-getters",
+ "dotenv",
+ "ethers",
+ "ethers-contract",
+ "ethers-core 2.0.5",
+ "ethers-derive-eip712",
+ "graphql_client 0.12.0",
+ "lazy_static",
+ "num-bigint",
+ "num-traits",
+ "once_cell",
+ "partial_application",
+ "prometheus-http-query",
+ "prost",
+ "reqwest",
+ "rsb_derive",
+ "secp256k1 0.26.0",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "slack-morphism",
+ "teloxide",
+ "thiserror",
+ "tokio",
+ "toml 0.7.4",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "waku-bindings",
+]
+
+[[package]]
 name = "graphql-introspection-query"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3861,7 +3904,7 @@ dependencies = [
 
 [[package]]
 name = "poi-radio"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-graphql",
@@ -3878,7 +3921,7 @@ dependencies = [
  "ethers-contract",
  "ethers-core 2.0.5",
  "ethers-derive-eip712",
- "graphcast-sdk",
+ "graphcast-sdk 0.3.2",
  "graphql_client 0.9.0",
  "hex",
  "metrics",
@@ -5349,7 +5392,7 @@ version = "0.0.1"
 dependencies = [
  "axum 0.5.17",
  "chrono",
- "graphcast-sdk",
+ "graphcast-sdk 0.3.1",
  "poi-radio",
  "rand 0.8.5",
  "serde",
@@ -5370,7 +5413,7 @@ version = "0.0.1"
 dependencies = [
  "axum 0.5.17",
  "chrono",
- "graphcast-sdk",
+ "graphcast-sdk 0.3.1",
  "poi-radio",
  "rand 0.8.5",
  "ring",
@@ -5388,7 +5431,7 @@ version = "0.0.1"
 dependencies = [
  "axum 0.5.17",
  "chrono",
- "graphcast-sdk",
+ "graphcast-sdk 0.3.1",
  "poi-radio",
  "rand 0.8.5",
  "tokio",
