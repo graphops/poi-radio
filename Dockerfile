@@ -2,13 +2,13 @@ FROM rust:1-bullseye AS build-image
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        wget \
-        curl \
-        libpq-dev \
-        pkg-config \
-        libssl-dev \
-        clang \
-        build-essential \
+    wget \
+    curl \
+    libpq-dev \
+    pkg-config \
+    libssl-dev \
+    clang \
+    build-essential \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -20,7 +20,7 @@ WORKDIR /poi-radio
 RUN sh install-golang.sh
 ENV PATH=$PATH:/usr/local/go/bin
 
-RUN cargo build --release -p poi-radio
+RUN cargo build --release --locked -p poi-radio
 
 FROM alpine:3.17.3 as alpine
 RUN set -x \
