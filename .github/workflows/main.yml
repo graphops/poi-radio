@@ -105,3 +105,23 @@ jobs:
         continue-on-error: false
         with:
           command: clippy
+  integration-tests:
+    name: E2E Tests
+    if: github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+      - name: Checkout submodules
+        run: git submodule update --init --recursive
+      - uses: actions/setup-go@v3
+        with:
+          go-version: "1.19"
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Run E2E Tests
+        run: cargo run -p test-runner
