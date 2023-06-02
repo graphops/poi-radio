@@ -103,8 +103,8 @@ pub async fn main() {
         radio: Arc::clone(&radio),
     };
 
-    // Wait for 2 minutes asynchronously
-    sleep(Duration::from_secs(120)).await;
+    // Wait for 3 minutes asynchronously
+    sleep(Duration::from_secs(180)).await;
 
     // Kill the processes
     let _ = cleanup.sender.lock().unwrap().kill();

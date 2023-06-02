@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [unreleased]
 
+### Bug Fixes
+
+- Server context types
+
 ### Features
 
 - Disable notifications for known divergences
@@ -15,6 +19,7 @@ All notable changes to this project will be documented in this file.
 
 - Release 0.3.2
 - Release 0.3.3
+- Release 0.3.4
 
 ### Refactor
 

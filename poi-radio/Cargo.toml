@@ -1,6 +1,6 @@
 [package]
 name = "poi-radio"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2021"
 authors = ["GraphOps (axiomatic-aardvark, hopeyen)"]
 description = "POI Radio monitors subgraph data integrity in real time using Graphcast SDK"
@@ -19,7 +19,6 @@ serde_json = "1.0.96"
 sha3 = "0.10.8"
 derive-getters = "0.2.1"
 tokio = { version = "1.28.1", features = ["full", "rt"] }
-# tokio = { version = "1.28", features = ["full", "tracing", "rt", "parking_lot"] }
 anyhow = "1.0"
 graphql_client = "0.9.0"
 serde_derive = "1.0"
