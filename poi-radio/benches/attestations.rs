@@ -7,10 +7,7 @@ mod attestation {
     use poi_radio::operator::attestation::{
         compare_attestations, local_comparison_point, update_blocks, Attestation,
     };
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex as SyncMutex},
-    };
+    use std::collections::HashMap;
 
     criterion_group!(
         benches,
@@ -92,7 +89,7 @@ mod attestation {
                 compare_attestations(
                     42,
                     black_box(remote_attestations.clone()),
-                    black_box(Arc::new(SyncMutex::new(local_attestations.clone()))),
+                    black_box(&local_attestations),
                     "my-awesome-hash",
                 )
             })
@@ -130,11 +127,10 @@ mod attestation {
             black_box(HashMap::new());
         black_box(local_attestations.insert("hash".to_string(), local_blocks.clone()));
         black_box(local_attestations.insert("hash2".to_string(), local_blocks));
-        let local: Arc<SyncMutex<HashMap<String, HashMap<u64, Attestation>>>> =
-            black_box(Arc::new(SyncMutex::new(local_attestations)));
+        let local: HashMap<String, HashMap<u64, Attestation>> = black_box(local_attestations);
 
         c.bench_function("comparison_point", |b| {
-            b.iter(|| local_comparison_point(black_box(local.clone()), "hash".to_string(), 120))
+            b.iter(|| local_comparison_point(black_box(&local), "hash".to_string(), 120))
         });
     }
 }

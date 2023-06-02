@@ -2,7 +2,6 @@ use async_graphql::{
     Context, EmptyMutation, EmptySubscription, InputObject, Object, Schema, SimpleObject,
 };
 use std::sync::{Arc, Mutex as SyncMutex};
-use tokio::sync::Mutex as AsyncMutex;
 use tracing::debug;
 
 use crate::{
@@ -28,12 +27,9 @@ impl QueryRoot {
         &self,
         ctx: &Context<'_>,
     ) -> Result<Vec<GraphcastMessage<RadioPayloadMessage>>, anyhow::Error> {
-        let state = ctx
-            .data_unchecked::<Arc<SyncMutex<PersistedState>>>()
-            .lock()
-            .unwrap()
-            .clone();
-        Ok(state.remote_messages().lock().unwrap().clone())
+        Ok(ctx
+            .data_unchecked::<Arc<POIRadioContext>>()
+            .remote_messages())
     }
 
     async fn radio_payload_messages_by_deployment(
@@ -41,12 +37,9 @@ impl QueryRoot {
         ctx: &Context<'_>,
         identifier: String,
     ) -> Result<Vec<GraphcastMessage<RadioPayloadMessage>>, anyhow::Error> {
-        let state = ctx
-            .data_unchecked::<Arc<SyncMutex<PersistedState>>>()
-            .lock()
-            .unwrap()
-            .clone();
-        let msg = state.remote_messages().lock().unwrap().clone();
+        let msg = ctx
+            .data_unchecked::<Arc<POIRadioContext>>()
+            .remote_messages();
         Ok(msg
             .iter()
             .cloned()
@@ -60,13 +53,10 @@ impl QueryRoot {
         identifier: Option<String>,
         block: Option<u64>,
     ) -> Result<Vec<AttestationEntry>, anyhow::Error> {
-        let state = ctx
-            .data_unchecked::<Arc<SyncMutex<PersistedState>>>()
-            .lock()
-            .unwrap()
-            .clone();
-        let attestations = &state.local_attestations();
-        let filtered = attestations_to_vec(attestations)
+        let attestations = ctx
+            .data_unchecked::<Arc<POIRadioContext>>()
+            .local_attestations();
+        let filtered = attestations_to_vec(&attestations)
             .into_iter()
             .filter(|entry| filter_attestations(entry, &identifier, &block))
             .collect::<Vec<_>>();
@@ -118,14 +108,14 @@ impl QueryRoot {
         deployment: String,
         block: u64,
     ) -> Result<ComparisonResult, AttestationError> {
-        let state = ctx
-            .data_unchecked::<Arc<AsyncMutex<PersistedState>>>()
-            .lock()
-            .await
-            .clone();
-        let msgs = state.remote_messages().lock().unwrap().clone();
-        let local_attestations = &state.local_attestations();
-        let config = ctx.data_unchecked::<Config>();
+        let msgs = ctx
+            .data_unchecked::<Arc<POIRadioContext>>()
+            .remote_messages();
+        let local_attestations = ctx
+            .data_unchecked::<Arc<POIRadioContext>>()
+            .local_attestations();
+        let config = ctx.data_unchecked::<Arc<POIRadioContext>>().radio_config();
+
         let filter_msg: Vec<GraphcastMessage<RadioPayloadMessage>> = msgs
             .iter()
             .filter(|&m| m.block_number == block)
@@ -156,7 +146,7 @@ impl QueryRoot {
         let comparison_result = compare_attestations(
             block,
             remote_attestations,
-            Arc::clone(local_attestations),
+            &local_attestations,
             &deployment.clone(),
         )
         .await;
@@ -258,17 +248,14 @@ pub struct POIRadioContext {
 }
 
 impl POIRadioContext {
-    pub async fn init(
-        radio_config: Config,
-        persisted_state: Arc<SyncMutex<PersistedState>>,
-    ) -> Self {
+    pub fn init(radio_config: Config, persisted_state: Arc<SyncMutex<PersistedState>>) -> Self {
         Self {
             radio_config,
             persisted_state,
         }
     }
 
-    pub async fn local_attestations(&self) -> LocalAttestationsMap {
+    pub fn local_attestations(&self) -> LocalAttestationsMap {
         self.persisted_state
             .lock()
             .unwrap()
@@ -276,6 +263,21 @@ impl POIRadioContext {
             .lock()
             .unwrap()
             .clone()
+    }
+
+    pub fn remote_messages(&self) -> Vec<GraphcastMessage<RadioPayloadMessage>> {
+        self.persisted_state
+            .lock()
+            .unwrap()
+            .clone()
+            .remote_messages()
+            .lock()
+            .unwrap()
+            .clone()
+    }
+
+    pub fn radio_config(&self) -> Config {
+        self.radio_config.clone()
     }
 }
 

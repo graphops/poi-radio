@@ -184,12 +184,12 @@ pub async fn message_comparison(
     registry_subgraph: String,
     network_subgraph: String,
     messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
-    local_attestations: Arc<SyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
+    local_attestations: HashMap<String, HashMap<u64, Attestation>>,
 ) -> Result<ComparisonResult, OperationError> {
     let time = Utc::now().timestamp();
 
     let (compare_block, collect_window_end) = match local_comparison_point(
-        Arc::clone(&local_attestations),
+        &local_attestations,
         id.clone(),
         collect_window_duration,
     ) {
@@ -243,13 +243,8 @@ pub async fn message_comparison(
             return Err(OperationError::Attestation(err));
         }
     };
-    let comparison_result = compare_attestations(
-        compare_block,
-        remote_attestations,
-        Arc::clone(&local_attestations),
-        &id,
-    )
-    .await;
+    let comparison_result =
+        compare_attestations(compare_block, remote_attestations, &local_attestations, &id).await;
 
     Ok(comparison_result)
 }
@@ -430,7 +425,7 @@ impl RadioOperator {
             let id_cloned = id.clone();
             let registry_subgraph = self.config.registry_subgraph.clone();
             let network_subgraph = self.config.network_subgraph.clone();
-            let local = Arc::clone(&local_attestations);
+            let local = local_attestations.lock().unwrap().clone();
             let msgs = remote_messages.lock().unwrap();
             let filtered_msg = msgs
                 .iter()

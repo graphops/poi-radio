@@ -93,12 +93,8 @@ pub struct AttestationEntry {
     pub attestation: Attestation,
 }
 
-pub fn attestations_to_vec(
-    attestations: &Arc<SyncMutex<LocalAttestationsMap>>,
-) -> Vec<AttestationEntry> {
+pub fn attestations_to_vec(attestations: &LocalAttestationsMap) -> Vec<AttestationEntry> {
     attestations
-        .lock()
-        .unwrap()
         .iter()
         .flat_map(|(npoi, inner_map)| {
             inner_map.iter().map(move |(blk, att)| AttestationEntry {
@@ -204,11 +200,10 @@ pub fn combine_senders(attestations: &[Attestation]) -> Vec<String> {
 /// Determine the comparison pointer on both block and time based on the local attestations
 /// If they don't exist, then return default value that shall never be validated to trigger
 pub fn local_comparison_point(
-    local_attestations: Arc<SyncMutex<LocalAttestationsMap>>,
+    local_attestations: &LocalAttestationsMap,
     id: String,
     collect_window_duration: i64,
 ) -> Option<(u64, i64)> {
-    let local_attestations = local_attestations.lock().unwrap();
     if let Some(blocks_map) = local_attestations.get(&id) {
         // Find the attestaion by the smallest block
         blocks_map
@@ -422,7 +417,7 @@ impl Clone for ComparisonResult {
 pub async fn compare_attestations(
     attestation_block: u64,
     remote: RemoteAttestationsMap,
-    local: Arc<SyncMutex<LocalAttestationsMap>>,
+    local: &LocalAttestationsMap,
     ipfs_hash: &str,
 ) -> ComparisonResult {
     trace!(
@@ -430,8 +425,6 @@ pub async fn compare_attestations(
         remote = tracing::field::debug(&remote),
         "Comparing attestations",
     );
-
-    let local = local.lock().unwrap();
 
     let blocks = match local.get(ipfs_hash) {
         Some(blocks) => blocks,
@@ -830,7 +823,7 @@ mod tests {
         let res = compare_attestations(
             42,
             HashMap::new(),
-            Arc::new(SyncMutex::new(HashMap::new())),
+            &HashMap::new(),
             "non-existent-ipfs-hash",
         )
         .await;
@@ -872,7 +865,7 @@ mod tests {
         let res = compare_attestations(
             42,
             remote_attestations,
-            Arc::new(SyncMutex::new(local_attestations)),
+            &local_attestations,
             "different-awesome-hash",
         )
         .await;
@@ -899,7 +892,7 @@ mod tests {
         let res = compare_attestations(
             42,
             remote_attestations,
-            Arc::new(SyncMutex::new(local_attestations)),
+            &local_attestations,
             "my-awesome-hash",
         )
         .await;
@@ -936,7 +929,7 @@ mod tests {
         let res = compare_attestations(
             42,
             remote_attestations,
-            Arc::new(SyncMutex::new(local_attestations)),
+            &local_attestations,
             "my-awesome-hash",
         )
         .await;
@@ -1030,9 +1023,8 @@ mod tests {
         let mut local_attestations: HashMap<String, HashMap<u64, Attestation>> = HashMap::new();
         local_attestations.insert("hash".to_string(), local_blocks.clone());
         local_attestations.insert("hash2".to_string(), local_blocks);
-        let local = Arc::new(SyncMutex::new(local_attestations));
         let (block_num, collect_window_end) =
-            local_comparison_point(local, "hash".to_string(), 120).unwrap();
+            local_comparison_point(&local_attestations, "hash".to_string(), 120).unwrap();
 
         assert_eq!(block_num, 42);
         assert_eq!(collect_window_end, 122);

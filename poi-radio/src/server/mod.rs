@@ -31,8 +31,10 @@ pub async fn run_server(
         return;
     }
     let port = config.server_port().unwrap();
-    let context =
-        Arc::new(POIRadioContext::init(config.clone(), Arc::clone(&persisted_state)).await);
+    let context = Arc::new(POIRadioContext::init(
+        config.clone(),
+        Arc::clone(&persisted_state),
+    ));
 
     let schema = build_schema(Arc::clone(&context)).await;
 
