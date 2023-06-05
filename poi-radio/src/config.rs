@@ -117,14 +117,14 @@ pub struct Config {
     #[clap(
         long,
         value_name = "WAKU_HOST",
-        help = "Host for the GraphQL HTTP server",
+        help = "Host for the Waku gossip client",
         env = "WAKU_HOST"
     )]
     pub waku_host: Option<String>,
     #[clap(
         long,
         value_name = "WAKU_PORT",
-        help = "Port for the GraphQL HTTP server",
+        help = "Port for the Waku gossip client",
         env = "WAKU_PORT"
     )]
     pub waku_port: Option<String>,

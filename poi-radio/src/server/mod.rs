@@ -2,7 +2,7 @@ use axum::{extract::Extension, routing::get, Router, Server};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex as SyncMutex};
+use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::{
@@ -24,17 +24,14 @@ pub mod routes;
 /// This function starts a API server at the configured server_host and server_port
 pub async fn run_server(
     config: Config,
-    persisted_state: Arc<SyncMutex<PersistedState>>,
+    persisted_state: &'static PersistedState,
     running_program: Arc<AtomicBool>,
 ) {
     if config.server_port().is_none() {
         return;
     }
     let port = config.server_port().unwrap();
-    let context = Arc::new(POIRadioContext::init(
-        config.clone(),
-        Arc::clone(&persisted_state),
-    ));
+    let context = Arc::new(POIRadioContext::init(config.clone(), persisted_state));
 
     let schema = build_schema(Arc::clone(&context)).await;
 

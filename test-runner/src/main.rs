@@ -118,7 +118,7 @@ pub async fn main() {
     let local_attestations = persisted_state.local_attestations();
 
     assert!(
-        !local_attestations.lock().unwrap().is_empty(),
+        !local_attestations.is_empty(),
         "There should be at least one element in local_attestations"
     );
 
@@ -129,14 +129,13 @@ pub async fn main() {
 
     for test_hash in test_hashes_local {
         assert!(
-            local_attestations.lock().unwrap().contains_key(test_hash),
+            local_attestations.contains_key(test_hash),
             "No attestation found with ipfs hash {}",
             test_hash
         );
     }
 
     let remote_messages = persisted_state.remote_messages();
-    let remote_messages = remote_messages.lock().unwrap();
 
     let test_hashes_remote = vec!["QmtYT8NhPd6msi1btMc3bXgrfhjkJoC4ChcM5tG6fyLjHE"];
 

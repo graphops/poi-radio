@@ -1,13 +1,14 @@
 use async_graphql::{
     Context, EmptyMutation, EmptySubscription, InputObject, Object, Schema, SimpleObject,
 };
-use std::sync::{Arc, Mutex as SyncMutex};
-use tracing::debug;
+
+use std::{collections::HashMap, sync::Arc};
+use thiserror::Error;
 
 use crate::{
     config::Config,
     operator::attestation::{
-        attestations_to_vec, compare_attestations, process_messages, Attestation, AttestationEntry,
+        attestations_to_vec, compare_attestation, process_messages, Attestation, AttestationEntry,
         AttestationError, ComparisonResult, ComparisonResultType, LocalAttestationsMap,
     },
     state::PersistedState,
@@ -26,25 +27,18 @@ impl QueryRoot {
     async fn radio_payload_messages(
         &self,
         ctx: &Context<'_>,
-    ) -> Result<Vec<GraphcastMessage<RadioPayloadMessage>>, anyhow::Error> {
-        Ok(ctx
-            .data_unchecked::<Arc<POIRadioContext>>()
-            .remote_messages())
-    }
-
-    async fn radio_payload_messages_by_deployment(
-        &self,
-        ctx: &Context<'_>,
-        identifier: String,
-    ) -> Result<Vec<GraphcastMessage<RadioPayloadMessage>>, anyhow::Error> {
-        let msg = ctx
+        identifier: Option<String>,
+        block: Option<u64>,
+    ) -> Result<Vec<GraphcastMessage<RadioPayloadMessage>>, HttpServiceError> {
+        let msgs = ctx
             .data_unchecked::<Arc<POIRadioContext>>()
             .remote_messages();
-        Ok(msg
+        let filtered = msgs
             .iter()
             .cloned()
-            .filter(|message| message.identifier == identifier.clone())
-            .collect::<Vec<_>>())
+            .filter(|message| filter_remote_messages(message, &identifier, &block))
+            .collect::<Vec<_>>();
+        Ok(filtered)
     }
 
     async fn local_attestations(
@@ -52,14 +46,11 @@ impl QueryRoot {
         ctx: &Context<'_>,
         identifier: Option<String>,
         block: Option<u64>,
-    ) -> Result<Vec<AttestationEntry>, anyhow::Error> {
+    ) -> Result<Vec<AttestationEntry>, HttpServiceError> {
         let attestations = ctx
             .data_unchecked::<Arc<POIRadioContext>>()
-            .local_attestations();
-        let filtered = attestations_to_vec(&attestations)
-            .into_iter()
-            .filter(|entry| filter_attestations(entry, &identifier, &block))
-            .collect::<Vec<_>>();
+            .local_attestations(identifier, block);
+        let filtered = attestations_to_vec(&attestations);
 
         Ok(filtered)
     }
@@ -70,92 +61,94 @@ impl QueryRoot {
         ctx: &Context<'_>,
         deployment: Option<String>,
         block: Option<u64>,
-        filter: Option<ResultFilter>,
-    ) -> Result<Vec<ComparisonResult>, anyhow::Error> {
+        _filter: Option<ResultFilter>,
+    ) -> Result<Vec<ComparisonResult>, HttpServiceError> {
         // Utilize the provided filters on local_attestations
-        let locals: Vec<AttestationEntry> = match self
-            .local_attestations(ctx, deployment.clone(), block)
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => return Err(e),
-        }
-        .into_iter()
-        .filter(|entry| filter_attestations(entry, &deployment.clone(), &block))
-        .collect::<Vec<AttestationEntry>>();
+        let locals = attestations_to_vec(
+            &ctx.data_unchecked::<Arc<POIRadioContext>>()
+                .local_attestations(deployment.clone(), block),
+        );
+
+        let config = ctx.data_unchecked::<Arc<POIRadioContext>>().radio_config();
+        let registry_subgraph = config.registry_subgraph.clone();
+        let network_subgraph = config.network_subgraph.clone();
 
         let mut res = vec![];
         for entry in locals {
-            let r = self
-                .comparison_result(ctx, entry.deployment, entry.block_number)
-                .await;
-            // ignore errored comparison for now
-            if r.is_err() {
-                continue;
-            }
-            let result = r.unwrap();
-            if filter_results(&result, &filter) {
-                res.push(result);
-            }
+            let deployment_identifier = entry.deployment.clone();
+            let msgs = self
+                .radio_payload_messages(
+                    ctx,
+                    Some(deployment_identifier.clone()),
+                    Some(entry.block_number),
+                )
+                .await?;
+            let remote_attestations =
+                match process_messages(msgs, &registry_subgraph, &network_subgraph).await {
+                    Ok(r) => {
+                        if let Some(deployment_attestations) = r.get(&deployment_identifier.clone())
+                        {
+                            if let Some(deployment_block_attestations) =
+                                deployment_attestations.get(&entry.block_number)
+                            {
+                                deployment_block_attestations.clone()
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    }
+                    Err(_e) => continue,
+                };
+
+            let r = compare_attestation(entry, remote_attestations);
+            res.push(r);
         }
+
+        // let remote_attestations =
+        //     process_messages(msgs, &registry_subgraph, &network_subgraph).await?;
+        // let comparison_result =
+        //     compare_attestations(deployment, remote_attestations, &locals, block).await;
 
         Ok(res)
     }
 
-    async fn comparison_result(
-        &self,
-        ctx: &Context<'_>,
-        deployment: String,
-        block: u64,
-    ) -> Result<ComparisonResult, AttestationError> {
-        let msgs = ctx
-            .data_unchecked::<Arc<POIRadioContext>>()
-            .remote_messages();
-        let local_attestations = ctx
-            .data_unchecked::<Arc<POIRadioContext>>()
-            .local_attestations();
-        let config = ctx.data_unchecked::<Arc<POIRadioContext>>().radio_config();
+    // async fn comparison_result(
+    //     &self,
+    //     ctx: &Context<'_>,
+    //     deployment: String,
+    //     block: u64,
+    // ) -> Result<ComparisonResult, HttpServiceError> {
+    //     let config = ctx.data_unchecked::<Arc<POIRadioContext>>().radio_config();
+    //     let msgs = self
+    //         .radio_payload_messages(ctx, Some(deployment.clone()), Some(block))
+    //         .await?;
+    //     let local_attestations = self
+    //         .local_attestations(ctx, Some(deployment.clone()), Some(block))
+    //         .await?;
 
-        let filter_msg: Vec<GraphcastMessage<RadioPayloadMessage>> = msgs
-            .iter()
-            .filter(|&m| m.block_number == block)
-            .cloned()
-            .collect();
+    //     let registry_subgraph = config.registry_subgraph.clone();
+    //     let network_subgraph = config.network_subgraph.clone();
 
-        let registry_subgraph = config.registry_subgraph.clone();
-        let network_subgraph = config.network_subgraph.clone();
-        let remote_attestations_result =
-            process_messages(filter_msg, &registry_subgraph, &network_subgraph).await;
-        let remote_attestations = match remote_attestations_result {
-            Ok(remote) => {
-                debug!(
-                    number_of_unique_remote_npois = remote.len(),
-                    "Processed messages",
-                );
-
-                remote
-            }
-            Err(err) => {
-                debug!(
-                    err = tracing::field::debug(&err),
-                    "An error occured while parsing messages"
-                );
-                return Err(err);
-            }
-        };
-        let comparison_result = compare_attestations(
-            block,
-            remote_attestations,
-            &local_attestations,
-            &deployment.clone(),
-        )
-        .await;
-
-        Ok(comparison_result)
-    }
+    //     let remote_attestations =
+    //         match process_messages(msgs, &registry_subgraph, &network_subgraph).await {
+    //             Ok(remote) => remote,
+    //             Err(err) => {
+    //                 debug!(
+    //                     err = tracing::field::debug(&err),
+    //                     "An error occured while parsing messages"
+    //                 );
+    //                 return Err(err);
+    //             }
+    //         };
+    //     let comparison_result =
+    //         compare_attestation(remote_attestations, local_attestations, deployment, block).await;
+    //     Ok(comparison_result)
+    // }
 
     /// Return the sender ratio for remote attestations, with a "!" for the attestation matching local
-    async fn sender_ratio(
+    async fn comparison_ratio(
         &self,
         ctx: &Context<'_>,
         deployment: Option<String>,
@@ -167,29 +160,18 @@ impl QueryRoot {
             .await?;
         let mut ratios = vec![];
         for r in res {
-            let ratio =
-                sender_count_str(&r.attestations, r.local_attestation.unwrap().npoi.clone());
-            ratios.push(CompareRatio::new(r.deployment, r.block_number, ratio));
-        }
-        Ok(ratios)
-    }
-
-    /// Return the stake weight for remote attestations, with a "!" for the attestation matching local
-    async fn stake_ratio(
-        &self,
-        ctx: &Context<'_>,
-        deployment: Option<String>,
-        block: Option<u64>,
-        filter: Option<ResultFilter>,
-    ) -> Result<Vec<CompareRatio>, anyhow::Error> {
-        let res = self
-            .comparison_results(ctx, deployment, block, filter)
-            .await?;
-        let mut ratios = vec![];
-        for r in res {
-            let ratio =
-                stake_weight_str(&r.attestations, r.local_attestation.unwrap().npoi.clone());
-            ratios.push(CompareRatio::new(r.deployment, r.block_number, ratio));
+            let npoi = r
+                .local_attestation
+                .map(|a| a.npoi)
+                .unwrap_or_else(|| "None".to_string());
+            let sender_ratio = sender_count_str(&r.attestations, npoi.clone());
+            let stake_ratio = stake_weight_str(&r.attestations, npoi);
+            ratios.push(CompareRatio::new(
+                r.deployment,
+                r.block_number,
+                sender_ratio,
+                stake_ratio,
+            ));
         }
         Ok(ratios)
     }
@@ -227,7 +209,7 @@ pub fn stake_weight_str(attestations: &[Attestation], local_npoi: String) -> Str
     // Iterate through the attestations and populate the maps
     // No set is needed since uniqueness is garuanteeded by validation
     for att in attestations.iter() {
-        let separator = if att.npoi == local_npoi { "!/" } else { "/" };
+        let separator = if att.npoi == local_npoi { "*:" } else { ":" };
         output.push_str(&format!("{}{}", att.stake_weight, separator));
     }
 
@@ -238,42 +220,58 @@ pub fn stake_weight_str(attestations: &[Attestation], local_npoi: String) -> Str
 
 pub async fn build_schema(ctx: Arc<POIRadioContext>) -> POIRadioSchema {
     Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
-        .data(Arc::clone(&ctx.persisted_state))
+        .data(ctx.persisted_state)
         .finish()
 }
 
 pub struct POIRadioContext {
     pub radio_config: Config,
-    pub persisted_state: Arc<SyncMutex<PersistedState>>,
+    pub persisted_state: &'static PersistedState,
 }
 
 impl POIRadioContext {
-    pub fn init(radio_config: Config, persisted_state: Arc<SyncMutex<PersistedState>>) -> Self {
+    pub fn init(radio_config: Config, persisted_state: &'static PersistedState) -> Self {
         Self {
             radio_config,
             persisted_state,
         }
     }
 
-    pub fn local_attestations(&self) -> LocalAttestationsMap {
-        self.persisted_state
-            .lock()
-            .unwrap()
-            .local_attestations()
-            .lock()
-            .unwrap()
-            .clone()
+    pub fn local_attestations(
+        &self,
+        identifier: Option<String>,
+        block: Option<u64>,
+    ) -> LocalAttestationsMap {
+        let attestations = self.persisted_state.local_attestations();
+        let mut empty_attestations: LocalAttestationsMap = HashMap::new();
+
+        if let Some(deployment) = identifier {
+            if let Some(deployment_attestations) = attestations.get(&deployment) {
+                if let Some(block) = block {
+                    if let Some(attestation) = deployment_attestations.get(&block) {
+                        let single_entry = (block, attestation.clone());
+                        let inner_map = vec![single_entry].into_iter().collect();
+
+                        vec![(deployment, inner_map)].into_iter().collect()
+                    } else {
+                        // Return empty hashmap if no entry satisfy the supplied identifier and block
+                        empty_attestations
+                    }
+                } else {
+                    // Return all blocks since no block was specified
+                    empty_attestations.insert(deployment, deployment_attestations.clone());
+                    empty_attestations
+                }
+            } else {
+                empty_attestations
+            }
+        } else {
+            attestations
+        }
     }
 
     pub fn remote_messages(&self) -> Vec<GraphcastMessage<RadioPayloadMessage>> {
-        self.persisted_state
-            .lock()
-            .unwrap()
-            .clone()
-            .remote_messages()
-            .lock()
-            .unwrap()
-            .clone()
+        self.persisted_state.remote_messages()
     }
 
     pub fn radio_config(&self) -> Config {
@@ -282,42 +280,20 @@ impl POIRadioContext {
 }
 
 /// Filter funciton for Attestations on deployment and block
-fn filter_attestations(
-    entry: &AttestationEntry,
+fn filter_remote_messages(
+    entry: &GraphcastMessage<RadioPayloadMessage>,
     identifier: &Option<String>,
     block: &Option<u64>,
 ) -> bool {
-    let is_matching_deployment = match identifier {
-        Some(dep) => entry.deployment == dep.clone(),
+    let is_matching_identifier = match identifier {
+        Some(id) => entry.identifier == id.clone(),
         None => true, // Skip check
     };
     let is_matching_block = match block {
         Some(b) => entry.block_number == *b,
         None => true, // Skip check
     };
-    is_matching_deployment && is_matching_block
-}
-
-fn filter_results(entry: &ComparisonResult, filter: &Option<ResultFilter>) -> bool {
-    let (identifier, block, result): (Option<String>, Option<u64>, Option<ComparisonResultType>) =
-        match filter {
-            None => (None, None, None),
-            Some(f) => (f.deployment.clone(), f.block_number, f.result_type),
-        };
-
-    let is_matching_deployment = match identifier {
-        Some(dep) => entry.deployment == dep,
-        None => true, // Skip check
-    };
-    let is_matching_block = match block {
-        Some(b) => entry.block_number == b,
-        None => true, // Skip check
-    };
-    let is_matching_result_type = match result {
-        Some(r) => entry.result_type == r,
-        None => true, // Skip check
-    };
-    is_matching_deployment && is_matching_block && is_matching_result_type
+    is_matching_identifier && is_matching_block
 }
 
 #[derive(InputObject)]
@@ -331,15 +307,41 @@ struct ResultFilter {
 struct CompareRatio {
     deployment: String,
     block_number: u64,
-    compare_ratio: String,
+    sender_ratio: String,
+    stake_ratio: String,
 }
 
 impl CompareRatio {
-    fn new(deployment: String, block_number: u64, compare_ratio: String) -> Self {
+    fn new(
+        deployment: String,
+        block_number: u64,
+        sender_ratio: String,
+        stake_ratio: String,
+    ) -> Self {
         CompareRatio {
             deployment,
             block_number,
-            compare_ratio,
+            sender_ratio,
+            stake_ratio,
         }
     }
+}
+
+#[derive(Error, Debug)]
+pub enum HttpServiceError {
+    #[error("Service processing failed: {0}")]
+    AttestationError(AttestationError),
+    #[error("Missing requested data: {0}")]
+    MissingData(String),
+    // Below ones are not used yet
+    #[error("HTTP request failed: {0}")]
+    RequestFailed(String),
+    #[error("HTTP response error: {0}")]
+    ResponseError(String),
+    #[error("Timeout error")]
+    TimeoutError,
+    #[error("Invalid URL: {0}")]
+    InvalidUrl(String),
+    #[error("HTTP client error: {0}")]
+    HttpClientError(#[from] reqwest::Error),
 }

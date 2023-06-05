@@ -23,8 +23,8 @@ use crate::{
     metrics::{CACHED_MESSAGES, VALIDATED_MESSAGES},
     operator::{
         attestation::{
-            clear_local_attestation, compare_attestations, local_comparison_point,
-            save_local_attestation, Attestation, ComparisonResult,
+            compare_attestations, local_comparison_point, save_local_attestation, Attestation,
+            ComparisonResult,
         },
         callbook::CallBookRadioExtensions,
         RadioOperator,
@@ -244,7 +244,7 @@ pub async fn message_comparison(
         }
     };
     let comparison_result =
-        compare_attestations(compare_block, remote_attestations, &local_attestations, &id).await;
+        compare_attestations(compare_block, remote_attestations, &local_attestations, &id);
 
     Ok(comparison_result)
 }
@@ -305,10 +305,7 @@ impl RadioOperator {
         // Skip messages that has been sent before
         if self
             .state()
-            .await
             .local_attestations()
-            .lock()
-            .unwrap()
             .get(&id.clone())
             .and_then(|blocks| blocks.get(&message_block))
             .is_some()
@@ -368,7 +365,6 @@ impl RadioOperator {
         let mut send_handles = vec![];
         for id in identifiers.clone() {
             /* Set up */
-            let local_attestations = self.persisted_state.lock().unwrap().local_attestations();
             let (network_name, latest_block, message_block) = if let Ok(params) = gossip_set_up(
                 id.clone(),
                 network_chainhead_blocks,
@@ -387,6 +383,7 @@ impl RadioOperator {
             let id_cloned = id.clone();
 
             let callbook = self.config.callbook();
+            let local_attestations = self.persisted_state.local_attestations.clone();
             let send_handle = tokio::spawn(async move {
                 message_send(
                     id_cloned,
@@ -417,17 +414,15 @@ impl RadioOperator {
         identifiers: Vec<String>,
     ) -> Vec<Result<ComparisonResult, OperationError>> {
         let mut compare_handles = vec![];
-        let local_attestations = self.state().await.local_attestations();
-        let remote_messages = self.state().await.remote_messages();
+        let remote_messages = self.state().remote_messages();
         for id in identifiers.clone() {
             /* Set up */
             let collect_duration: i64 = self.config.collect_message_duration().to_owned();
             let id_cloned = id.clone();
             let registry_subgraph = self.config.registry_subgraph.clone();
             let network_subgraph = self.config.network_subgraph.clone();
-            let local = local_attestations.lock().unwrap().clone();
-            let msgs = remote_messages.lock().unwrap();
-            let filtered_msg = msgs
+            let local_attestations = self.state().local_attestations();
+            let filtered_msg = remote_messages
                 .iter()
                 .filter(|&m| m.identifier == id.clone())
                 .cloned()
@@ -440,7 +435,7 @@ impl RadioOperator {
                     registry_subgraph.clone(),
                     network_subgraph.clone(),
                     filtered_msg,
-                    local,
+                    local_attestations,
                 )
                 .await
             });
@@ -459,30 +454,14 @@ impl RadioOperator {
                         /* Clean up cache */
                         // Only clear the ones matching identifier and block number equal or less
                         // Retain the msgs with a different identifier, or if their block number is greater
-                        let local = Arc::clone(&local_attestations);
-                        clear_local_attestation(local, r.deployment_hash(), r.block());
+                        // clear_local_attestation(&mut local_attestations, r.deployment_hash(), r.block());
                         self.persisted_state
-                            .lock()
-                            .unwrap()
-                            .remote_messages()
-                            .lock()
-                            .unwrap()
-                            .retain(|msg| {
-                                msg.block_number >= r.block()
-                                    || msg.identifier != r.deployment_hash()
-                            });
+                            .clean_local_attestations(r.block(), r.deployment_hash());
+                        self.persisted_state
+                            .clean_remote_messages(r.block(), r.deployment_hash());
                         CACHED_MESSAGES
                             .with_label_values(&[&r.deployment_hash()])
-                            .set(
-                                self.state()
-                                    .await
-                                    .remote_messages()
-                                    .lock()
-                                    .unwrap()
-                                    .len()
-                                    .try_into()
-                                    .unwrap(),
-                            );
+                            .set(self.state().remote_messages().len().try_into().unwrap());
                     }
                     Err(e) => {
                         trace!(err = tracing::field::debug(&e), "Compare handles");

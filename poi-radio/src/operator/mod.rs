@@ -82,7 +82,7 @@ impl ControlFlow {
 #[allow(unused)]
 pub struct RadioOperator {
     config: Config,
-    persisted_state: Arc<SyncMutex<PersistedState>>,
+    persisted_state: PersistedState,
     graphcast_agent: Arc<GraphcastAgent>,
     notifier: Notifier,
     control_flow: ControlFlow,
@@ -111,8 +111,7 @@ impl RadioOperator {
 
         debug!("Initializing program state");
         // Initialize program state
-        let persisted_state: Arc<SyncMutex<PersistedState>> =
-            Arc::new(SyncMutex::new(config.init_radio_state().await));
+        let persisted_state: PersistedState = config.init_radio_state().await;
 
         debug!("Initializing Graphcast Agent");
         let graphcast_agent = Arc::new(
@@ -173,20 +172,10 @@ impl RadioOperator {
                     msg
                 );
                 let identifier = msg.identifier.clone();
-                state_ref
-                    .lock()
-                    .unwrap()
-                    .remote_messages()
-                    .lock()
-                    .unwrap()
-                    .push(msg.clone());
+                state_ref.add_remote_message(msg.clone());
                 CACHED_MESSAGES.with_label_values(&[&identifier]).set(
                     state_ref
-                        .lock()
-                        .unwrap()
                         .remote_messages()
-                        .lock()
-                        .unwrap()
                         .iter()
                         .filter(|m| m.identifier == identifier)
                         .collect::<Vec<&GraphcastMessage<RadioPayloadMessage>>>()
@@ -203,12 +192,12 @@ impl RadioOperator {
     }
 
     /// Read persisted state at the time of access
-    pub async fn state(&self) -> PersistedState {
-        self.persisted_state.lock().unwrap().clone()
+    pub fn state(&self) -> PersistedState {
+        self.persisted_state.clone()
     }
 
     /// Radio operations
-    pub async fn run(&self) {
+    pub async fn run(&'static self) {
         // Control flow
         // TODO: expose to radio config for the users
         let running = Arc::new(AtomicBool::new(true));
@@ -234,11 +223,9 @@ impl RadioOperator {
 
         // Initialize Http server with graceful shutdown if configured
         if self.config.server_port().is_some() {
-            tokio::spawn(run_server(
-                self.config.clone(),
-                self.persisted_state.clone(),
-                running.clone(),
-            ));
+            let state_ref = &self.persisted_state;
+            let config_cloned = self.config.clone();
+            tokio::spawn(run_server(config_cloned, state_ref, running.clone()));
         }
 
         // Main loop for sending messages, can factor out
@@ -271,7 +258,7 @@ impl RadioOperator {
 
                     // Save cache if path provided
                     let _ = &self.config.persistence_file_path.as_ref().map(|path| {
-                        self.persisted_state.lock().unwrap().update_cache(path);
+                        self.persisted_state.update_cache(path);
                     });
                 },
                 _ = gossip_poi_interval.tick() => {

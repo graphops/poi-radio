@@ -10,21 +10,19 @@ use std::{
     collections::HashMap,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex as SyncMutex,
+        Arc,
     },
 };
 use tokio::signal;
 use tracing::error;
 
 use graphcast_sdk::{
-    graphcast_agent::GraphcastAgentError,
-    graphql::{client_graph_node::get_indexing_statuses, QueryError},
+    graphcast_agent::GraphcastAgent, graphql::client_network::query_network_subgraph,
+    networks::NetworkName, BlockPointer,
 };
 use graphcast_sdk::{
-    graphcast_agent::{message_typing::GraphcastMessage, GraphcastAgent},
-    graphql::client_network::query_network_subgraph,
-    networks::NetworkName,
-    BlockPointer,
+    graphcast_agent::GraphcastAgentError,
+    graphql::{client_graph_node::get_indexing_statuses, QueryError},
 };
 
 use crate::operator::attestation::AttestationError;
@@ -35,8 +33,6 @@ pub mod metrics;
 pub mod operator;
 pub mod server;
 pub mod state;
-
-pub type MessagesVec = OnceCell<Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>>;
 
 /// A global static (singleton) instance of GraphcastAgent. It is useful to ensure that we have only one GraphcastAgent
 /// per Radio instance, so that we can keep track of state and more easily test our Radio application.

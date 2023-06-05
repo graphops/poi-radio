@@ -9,6 +9,7 @@ use tracing::warn;
 
 use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
 
+use crate::operator::attestation::clear_local_attestation;
 use crate::{operator::attestation::Attestation, RadioPayloadMessage};
 
 type Local = Arc<SyncMutex<HashMap<String, HashMap<u64, Attestation>>>>;
@@ -16,8 +17,8 @@ type Remote = Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PersistedState {
-    local_attestations: Local,
-    remote_messages: Remote,
+    pub local_attestations: Local,
+    pub remote_messages: Remote,
 }
 
 impl PersistedState {
@@ -51,24 +52,9 @@ impl PersistedState {
         }
     }
 
-    /// Updates for local_attestations
-    pub async fn update_local(&mut self, local_attestations: Local) {
-        self.local_attestations = local_attestations;
-    }
-
-    /// Updates for remote_messages
-    pub async fn update_remote(&mut self, remote_messages: Remote) {
-        self.remote_messages = remote_messages;
-    }
-
-    /// Updates for remote_messages
-    pub async fn add_remote_message(&mut self, msg: GraphcastMessage<RadioPayloadMessage>) {
-        self.remote_messages.lock().unwrap().push(msg)
-    }
-
     /// Getter for local_attestations
-    pub fn local_attestations(&self) -> Arc<SyncMutex<HashMap<String, HashMap<u64, Attestation>>>> {
-        self.local_attestations.clone()
+    pub fn local_attestations(&self) -> HashMap<String, HashMap<u64, Attestation>> {
+        self.local_attestations.lock().unwrap().clone()
     }
 
     /// Getter for one local_attestation
@@ -80,8 +66,37 @@ impl PersistedState {
     }
 
     /// Getter for remote_messages
-    pub fn remote_messages(&self) -> Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>> {
-        self.remote_messages.clone()
+    pub fn remote_messages(&self) -> Vec<GraphcastMessage<RadioPayloadMessage>> {
+        self.remote_messages.lock().unwrap().clone()
+    }
+
+    /// Update local_attestations
+    pub async fn update_local(&mut self, local_attestations: Local) {
+        self.local_attestations = local_attestations;
+    }
+
+    /// Update remote_messages
+    pub async fn update_remote(&mut self, remote_messages: Remote) {
+        self.remote_messages = remote_messages;
+    }
+
+    /// Add message to remote_messages
+    pub fn add_remote_message(&self, msg: GraphcastMessage<RadioPayloadMessage>) {
+        self.remote_messages.lock().unwrap().push(msg)
+    }
+
+    /// Clean remote_messages
+    pub fn clean_remote_messages(&self, block_number: u64, deployment: String) {
+        self.remote_messages
+            .lock()
+            .unwrap()
+            .retain(|msg| msg.block_number >= block_number || msg.identifier != deployment)
+    }
+
+    /// Clean local_attestations
+    // TODO: Refactor with attestations operations
+    pub fn clean_local_attestations(&self, block_number: u64, ipfs_hash: String) {
+        clear_local_attestation(self.local_attestations.clone(), ipfs_hash, block_number)
     }
 
     /// Update file cache

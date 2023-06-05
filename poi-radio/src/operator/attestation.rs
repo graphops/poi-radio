@@ -86,7 +86,7 @@ impl fmt::Display for Attestation {
 pub type RemoteAttestationsMap = HashMap<String, HashMap<u64, Vec<Attestation>>>;
 pub type LocalAttestationsMap = HashMap<String, HashMap<u64, Attestation>>;
 
-#[derive(SimpleObject)]
+#[derive(SimpleObject, Debug)]
 pub struct AttestationEntry {
     pub deployment: String,
     pub block_number: u64,
@@ -256,24 +256,15 @@ pub fn save_local_attestation(
     let attestation = Attestation::new(content, Zero::zero(), vec![], vec![Utc::now().timestamp()]);
 
     let mut local_attestations = local_attestations.lock().unwrap();
-    let blocks = local_attestations.get(&ipfs_hash);
 
-    match blocks {
-        Some(blocks) => {
-            let mut blocks_clone: HashMap<u64, Attestation> = HashMap::new();
-            blocks_clone.extend(blocks.clone());
-            // Save the first attestation for a comparison period
-            blocks_clone.entry(block_number).or_insert(attestation);
-            local_attestations.insert(ipfs_hash.clone(), blocks_clone);
-        }
-        None => {
-            let mut blocks_clone: HashMap<u64, Attestation> = HashMap::new();
-            blocks_clone.insert(block_number, attestation);
-            local_attestations.insert(ipfs_hash.clone(), blocks_clone);
-        }
-    };
+    local_attestations
+        .entry(ipfs_hash.clone())
+        .or_default()
+        .entry(block_number)
+        .and_modify(|existing_attestation| *existing_attestation = attestation.clone())
+        .or_insert(attestation);
 
-    let npoi_gauge = LOCAL_NPOIS_TO_COMPARE.with_label_values(&[&ipfs_hash.clone()]);
+    let npoi_gauge = LOCAL_NPOIS_TO_COMPARE.with_label_values(&[&ipfs_hash]);
 
     // The value is the total number of senders that are attesting for that subgraph
     npoi_gauge.set(local_attestations.len().try_into().unwrap());
@@ -300,7 +291,7 @@ pub fn clear_local_attestation(
 }
 
 /// Tracks results indexed by deployment hash and block number
-#[derive(Enum, Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Enum, Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum ComparisonResultType {
     NotFound,
     Divergent,
@@ -414,7 +405,7 @@ impl Clone for ComparisonResult {
 /// The top remote attestation is found by grouping attestations together and increasing their total stake-weight every time we see a new message
 /// with the same NPOI from an Indexer (NOTE: one Indexer can only send 1 attestation per subgraph per block). The attestations are then sorted
 /// and we take the one with the highest total stake-weight.
-pub async fn compare_attestations(
+pub fn compare_attestations(
     attestation_block: u64,
     remote: RemoteAttestationsMap,
     local: &LocalAttestationsMap,
@@ -426,6 +417,7 @@ pub async fn compare_attestations(
         "Comparing attestations",
     );
 
+    // Filtering local and remote attestations
     let blocks = match local.get(ipfs_hash) {
         Some(blocks) => blocks,
         None => {
@@ -524,6 +516,47 @@ pub async fn compare_attestations(
             block_number: attestation_block,
             result_type: ComparisonResultType::Divergent,
             local_attestation: Some(local_attestation.clone()),
+            attestations: remote_attestations,
+        }
+    }
+}
+
+/// Assume that local and remote has already been matched with the desired deployment and block
+pub fn compare_attestation(
+    local: AttestationEntry,
+    remote_attestations: Vec<Attestation>,
+) -> ComparisonResult {
+    let local_attestation = local.attestation;
+    let mut remote_attestations = remote_attestations;
+    remote_attestations.sort_by(|a, b| a.stake_weight.partial_cmp(&b.stake_weight).unwrap());
+
+    let most_attested_npoi = &remote_attestations.last().unwrap().npoi;
+    if most_attested_npoi == &local_attestation.npoi {
+        info!(
+            local.block_number,
+            remote_attestations = tracing::field::debug(&remote_attestations),
+            local_attestation = tracing::field::debug(&local_attestation),
+            "nPOI matched",
+        );
+        ComparisonResult {
+            deployment: local.deployment.to_string(),
+            block_number: local.block_number,
+            result_type: ComparisonResultType::Match,
+            local_attestation: Some(local_attestation),
+            attestations: remote_attestations,
+        }
+    } else {
+        info!(
+            block = local.block_number,
+            remote_attestations = tracing::field::debug(&remote_attestations),
+            local_attestation = tracing::field::debug(&local_attestation),
+            "Detected divergence",
+        );
+        ComparisonResult {
+            deployment: local.deployment.to_string(),
+            block_number: local.block_number,
+            result_type: ComparisonResultType::Divergent,
+            local_attestation: Some(local_attestation),
             attestations: remote_attestations,
         }
     }
@@ -825,8 +858,7 @@ mod tests {
             HashMap::new(),
             &HashMap::new(),
             "non-existent-ipfs-hash",
-        )
-        .await;
+        );
 
         assert_eq!(
             res.to_string(),
@@ -867,8 +899,7 @@ mod tests {
             remote_attestations,
             &local_attestations,
             "different-awesome-hash",
-        )
-        .await;
+        );
 
         assert_eq!(
             res.to_string(),
@@ -894,8 +925,7 @@ mod tests {
             remote_attestations,
             &local_attestations,
             "my-awesome-hash",
-        )
-        .await;
+        );
 
         assert_eq!(
             res.to_string(),
@@ -931,8 +961,7 @@ mod tests {
             remote_attestations,
             &local_attestations,
             "my-awesome-hash",
-        )
-        .await;
+        );
 
         assert_eq!(
             res,
@@ -940,8 +969,8 @@ mod tests {
                 deployment: "my-awesome-hash".to_string(),
                 block_number: 42,
                 result_type: ComparisonResultType::Match,
-                local_attestation: Some(local.clone()),
-                attestations: vec![remote.clone()],
+                local_attestation: Some(local),
+                attestations: vec![remote],
             }
         );
     }
