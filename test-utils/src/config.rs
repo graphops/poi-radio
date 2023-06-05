@@ -31,8 +31,7 @@ pub fn test_config(
         waku_addr: None,
         boot_node_addresses: vec![],
         waku_log_level: None,
-        log_level: "off,hyper=off,graphcast_sdk=trace,poi_radio=trace,poi-radio-e2e-tests=trace"
-            .to_string(),
+        log_level: "off,hyper=off,graphcast_sdk=info,poi_radio=info,test_runner=trace".to_string(),
         slack_token: None,
         slack_channel: None,
         discord_webhook: None,

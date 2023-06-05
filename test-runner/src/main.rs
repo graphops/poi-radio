@@ -4,10 +4,11 @@ use std::sync::{Arc, Mutex};
 use graphcast_sdk::init_tracing;
 use poi_radio::config::CoverageLevel;
 use poi_radio::state::PersistedState;
+use test_runner::message_handling::send_and_receive_test;
 use test_utils::config::test_config;
 use test_utils::mock_server::start_mock_server;
 use tokio::time::{sleep, Duration};
-use tracing::{info, trace};
+use tracing::{debug, info};
 
 struct Cleanup {
     sender: Arc<Mutex<Child>>,
@@ -23,14 +24,6 @@ impl Drop for Cleanup {
 
 #[tokio::main]
 pub async fn main() {
-    std::env::set_var(
-        "RUST_LOG",
-        "off,hyper=off,graphcast_sdk=debug,poi_radio=debug,poi-radio-e2e-tests=debug,test_runner=debug,sender=debug,radio=debug",
-    );
-    init_tracing("pretty".to_string()).expect("Could not set up global default subscriber for logger, check environmental variable `RUST_LOG` or the CLI input `log-level");
-
-    info!("Starting");
-
     let id = uuid::Uuid::new_v4().to_string();
     std::env::set_var("TEST_RUN_ID", &id);
 
@@ -51,6 +44,14 @@ pub async fn main() {
         format!("http://{}/registry-subgraph", host),
         format!("http://{}/network-subgraph", host),
     );
+
+    std::env::set_var(
+        "RUST_LOG",
+        "off,hyper=off,graphcast_sdk=debug,poi_radio=debug,test_runner=debug,test_sender=debug,radio=debug",
+    );
+    init_tracing(config.log_format.clone()).expect("Could not set up global default subscriber for logger, check environmental variable `RUST_LOG` or the CLI input `log-level");
+
+    info!("Starting");
 
     let radio = Arc::new(Mutex::new(
         Command::new("cargo")
@@ -110,46 +111,15 @@ pub async fn main() {
     let _ = cleanup.sender.lock().unwrap().kill();
     let _ = cleanup.radio.lock().unwrap().kill();
 
-    // Read the content of the state.json file
     let state_file_path = "./test-runner/state.json";
     let persisted_state = PersistedState::load_cache(state_file_path);
-    trace!("persisted state {:?}", persisted_state);
+    debug!("persisted state {:?}", persisted_state);
 
     let local_attestations = persisted_state.local_attestations();
-
-    assert!(
-        !local_attestations.lock().unwrap().is_empty(),
-        "There should be at least one element in local_attestations"
-    );
-
-    let test_hashes_local = vec![
-        "QmpRkaVUwUQAwPwWgdQHYvw53A5gh3CP3giWnWQZdA2BTE",
-        "QmtYT8NhPd6msi1btMc3bXgrfhjkJoC4ChcM5tG6fyLjHE",
-    ];
-
-    for test_hash in test_hashes_local {
-        assert!(
-            local_attestations.lock().unwrap().contains_key(test_hash),
-            "No attestation found with ipfs hash {}",
-            test_hash
-        );
-    }
-
     let remote_messages = persisted_state.remote_messages();
     let remote_messages = remote_messages.lock().unwrap();
 
-    let test_hashes_remote = vec!["QmtYT8NhPd6msi1btMc3bXgrfhjkJoC4ChcM5tG6fyLjHE"];
-
-    for target_id in test_hashes_remote {
-        let has_target_id = remote_messages
-            .iter()
-            .any(|msg| msg.identifier == *target_id);
-        assert!(
-            has_target_id,
-            "No remote message found with identifier {}",
-            target_id
-        );
-    }
+    send_and_receive_test(&local_attestations.lock().unwrap(), &remote_messages);
 
     info!("All checks passed ✅");
 }

@@ -38,7 +38,7 @@ fn generate_random_poi() -> String {
 pub async fn main() {
     std::env::set_var(
         "RUST_LOG",
-        "off,hyper=off,graphcast_sdk=trace,poi_radio=trace,poi-radio-e2e-tests=trace",
+        "off,hyper=off,graphcast_sdk=info,poi_radio=info,poi-radio-e2e-tests=info",
     );
     init_tracing("pretty".to_string()).expect("Could not set up global default subscriber for logger, check environmental variable `RUST_LOG` or the CLI input `log-level");
 
