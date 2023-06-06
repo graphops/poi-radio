@@ -14,7 +14,7 @@ use crate::{
     state::PersistedState,
     RadioPayloadMessage,
 };
-use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
+use graphcast_sdk::{graphcast_agent::message_typing::GraphcastMessage, graphql::QueryError};
 
 pub(crate) type POIRadioSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
 
@@ -106,46 +106,8 @@ impl QueryRoot {
             res.push(r);
         }
 
-        // let remote_attestations =
-        //     process_messages(msgs, &registry_subgraph, &network_subgraph).await?;
-        // let comparison_result =
-        //     compare_attestations(deployment, remote_attestations, &locals, block).await;
-
         Ok(res)
     }
-
-    // async fn comparison_result(
-    //     &self,
-    //     ctx: &Context<'_>,
-    //     deployment: String,
-    //     block: u64,
-    // ) -> Result<ComparisonResult, HttpServiceError> {
-    //     let config = ctx.data_unchecked::<Arc<POIRadioContext>>().radio_config();
-    //     let msgs = self
-    //         .radio_payload_messages(ctx, Some(deployment.clone()), Some(block))
-    //         .await?;
-    //     let local_attestations = self
-    //         .local_attestations(ctx, Some(deployment.clone()), Some(block))
-    //         .await?;
-
-    //     let registry_subgraph = config.registry_subgraph.clone();
-    //     let network_subgraph = config.network_subgraph.clone();
-
-    //     let remote_attestations =
-    //         match process_messages(msgs, &registry_subgraph, &network_subgraph).await {
-    //             Ok(remote) => remote,
-    //             Err(err) => {
-    //                 debug!(
-    //                     err = tracing::field::debug(&err),
-    //                     "An error occured while parsing messages"
-    //                 );
-    //                 return Err(err);
-    //             }
-    //         };
-    //     let comparison_result =
-    //         compare_attestation(remote_attestations, local_attestations, deployment, block).await;
-    //     Ok(comparison_result)
-    // }
 
     /// Return the sender ratio for remote attestations, with a "!" for the attestation matching local
     async fn comparison_ratio(
@@ -154,7 +116,7 @@ impl QueryRoot {
         deployment: Option<String>,
         block: Option<u64>,
         filter: Option<ResultFilter>,
-    ) -> Result<Vec<CompareRatio>, anyhow::Error> {
+    ) -> Result<Vec<CompareRatio>, HttpServiceError> {
         let res = self
             .comparison_results(ctx, deployment, block, filter)
             .await?;
@@ -174,6 +136,16 @@ impl QueryRoot {
             ));
         }
         Ok(ratios)
+    }
+
+    /// Return indexer info
+    async fn indexer_info(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<IndexerInfo, HttpServiceError> {
+        let config = ctx.data_unchecked::<Arc<POIRadioContext>>().radio_config();
+        let basic_info = config.basic_info().await.map_err(|e| HttpServiceError::QueryError(e))?;
+        Ok(IndexerInfo { address: basic_info.0, stake: basic_info.1 })
     }
 }
 
@@ -327,12 +299,20 @@ impl CompareRatio {
     }
 }
 
+#[derive(Debug, PartialEq, SimpleObject)]
+struct IndexerInfo {
+    address: String,
+    stake: f32,
+}
+
 #[derive(Error, Debug)]
 pub enum HttpServiceError {
     #[error("Service processing failed: {0}")]
     AttestationError(AttestationError),
     #[error("Missing requested data: {0}")]
     MissingData(String),
+    #[error("Query failed: {0}")]
+    QueryError(QueryError),
     // Below ones are not used yet
     #[error("HTTP request failed: {0}")]
     RequestFailed(String),
