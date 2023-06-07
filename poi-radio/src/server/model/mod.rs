@@ -1,6 +1,7 @@
 use async_graphql::{
     Context, EmptyMutation, EmptySubscription, InputObject, Object, Schema, SimpleObject,
 };
+use chrono::Utc;
 
 use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
@@ -8,8 +9,9 @@ use thiserror::Error;
 use crate::{
     config::Config,
     operator::attestation::{
-        attestations_to_vec, compare_attestation, process_messages, Attestation, AttestationEntry,
-        AttestationError, ComparisonResult, ComparisonResultType, LocalAttestationsMap,
+        self, attestations_to_vec, compare_attestation, process_messages, Attestation,
+        AttestationEntry, AttestationError, ComparisonResult, ComparisonResultType,
+        LocalAttestationsMap,
     },
     state::PersistedState,
     RadioPayloadMessage,
@@ -120,14 +122,37 @@ impl QueryRoot {
         let res = self
             .comparison_results(ctx, deployment, block, filter)
             .await?;
+        let local_info = self.indexer_info(ctx).await?;
+
         let mut ratios = vec![];
         for r in res {
-            let npoi = r
-                .local_attestation
-                .map(|a| a.npoi)
-                .unwrap_or_else(|| "None".to_string());
-            let sender_ratio = sender_count_str(&r.attestations, npoi.clone());
-            let stake_ratio = stake_weight_str(&r.attestations, npoi);
+            let local_attestation = if let Some(local_attestation) = r.local_attestation {
+                local_attestation
+            } else {
+                continue;
+            };
+            let local_npoi = local_attestation.npoi.clone();
+
+            let mut aggregated_attestations: Vec<Attestation> = vec![];
+            for a in r.attestations {
+                if a.npoi == local_attestation.npoi {
+                    let updateed_attestation = attestation::Attestation::update(
+                        &a,
+                        local_info.address.clone(),
+                        local_info.stake,
+                        Utc::now().timestamp(),
+                    );
+                    if let Ok(updated_a) = updateed_attestation {
+                        aggregated_attestations.push(updated_a);
+                    } else {
+                        continue;
+                    }
+                } else {
+                    aggregated_attestations.push(a)
+                }
+            }
+            let sender_ratio = sender_count_str(&aggregated_attestations, local_npoi.clone());
+            let stake_ratio = stake_weight_str(&aggregated_attestations, local_npoi);
             ratios.push(CompareRatio::new(
                 r.deployment,
                 r.block_number,
@@ -139,13 +164,16 @@ impl QueryRoot {
     }
 
     /// Return indexer info
-    async fn indexer_info(
-        &self,
-        ctx: &Context<'_>,
-    ) -> Result<IndexerInfo, HttpServiceError> {
+    async fn indexer_info(&self, ctx: &Context<'_>) -> Result<IndexerInfo, HttpServiceError> {
         let config = ctx.data_unchecked::<Arc<POIRadioContext>>().radio_config();
-        let basic_info = config.basic_info().await.map_err(|e| HttpServiceError::QueryError(e))?;
-        Ok(IndexerInfo { address: basic_info.0, stake: basic_info.1 })
+        let basic_info = config
+            .basic_info()
+            .await
+            .map_err(HttpServiceError::QueryError)?;
+        Ok(IndexerInfo {
+            address: basic_info.0,
+            stake: basic_info.1,
+        })
     }
 }
 
@@ -160,12 +188,12 @@ pub fn sender_count_str(attestations: &[Attestation], local_npoi: String) -> Str
     // Iterate through the attestations and populate the maps
     // No set is needed since uniqueness is garuanteeded by validation
     for att in attestations.iter() {
-        let separator = if att.npoi == local_npoi { "!/" } else { "/" };
+        let separator = if att.npoi == local_npoi { "*:" } else { ":" };
 
         output.push_str(&format!("{}{}", att.senders.len(), separator));
     }
 
-    output.pop(); // Remove the trailing '/'
+    output.pop(); // Remove the trailing ':'
 
     output
 }
@@ -185,8 +213,7 @@ pub fn stake_weight_str(attestations: &[Attestation], local_npoi: String) -> Str
         output.push_str(&format!("{}{}", att.stake_weight, separator));
     }
 
-    output.pop(); // Remove the trailing '/'
-
+    output.pop(); // Remove the trailing ':'
     output
 }
 
