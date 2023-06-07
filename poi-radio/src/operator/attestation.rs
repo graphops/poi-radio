@@ -491,7 +491,7 @@ pub fn compare_attestations(
 
     let most_attested_npoi = &remote_attestations.last().unwrap().npoi;
     if most_attested_npoi == &local_attestation.npoi {
-        info!(
+        trace!(
             ipfs_hash,
             attestation_block,
             num_unique_npois = remote_attestations.len(),
@@ -505,7 +505,7 @@ pub fn compare_attestations(
             attestations: remote_attestations,
         }
     } else {
-        info!(
+        debug!(
             attestation_block,
             remote_attestations = tracing::field::debug(&remote_attestations),
             local_attestation = tracing::field::debug(&local_attestation),
@@ -532,7 +532,7 @@ pub fn compare_attestation(
 
     let most_attested_npoi = &remote_attestations.last().unwrap().npoi;
     if most_attested_npoi == &local_attestation.npoi {
-        info!(
+        trace!(
             local.block_number,
             remote_attestations = tracing::field::debug(&remote_attestations),
             local_attestation = tracing::field::debug(&local_attestation),
@@ -546,7 +546,7 @@ pub fn compare_attestation(
             attestations: remote_attestations,
         }
     } else {
-        info!(
+        warn!(
             block = local.block_number,
             remote_attestations = tracing::field::debug(&remote_attestations),
             local_attestation = tracing::field::debug(&local_attestation),
