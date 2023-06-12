@@ -321,6 +321,7 @@ impl Config {
             self.waku_host.clone(),
             self.waku_port.clone(),
             self.waku_addr.clone(),
+            Some(false),
             self.discv5_enrs.clone(),
             self.discv5_port,
         )
