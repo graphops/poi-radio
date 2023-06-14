@@ -1,23 +1,14 @@
-use std::env;
-
 use poi_radio::config::{Config, CoverageLevel};
 
-pub fn test_config(
-    graph_node_endpoint: String,
-    registry_subgraph: String,
-    network_subgraph: String,
-) -> Config {
-    let id = env::var("TEST_RUN_ID").unwrap_or_else(|_| panic!("TEST_RUN_ID not set"));
-    let radio_name = format!("poi-radio-test-{}", id);
-
+pub fn test_config() -> Config {
     Config {
-        graph_node_endpoint,
+        graph_node_endpoint: String::new(),
         private_key: Some(
             "ccaea3e3aca412cb3920dbecd77bc725dfe9a5e16f940f19912d9c9dbee01e8f".to_string(),
         ),
         mnemonic: None,
-        registry_subgraph,
-        network_subgraph,
+        registry_subgraph: String::new(),
+        network_subgraph: String::new(),
         graphcast_network: "testnet".to_string(),
         topics: vec![
             "QmpRkaVUwUQAwPwWgdQHYvw53A5gh3CP3giWnWQZdA2BTE".to_string(),
@@ -31,8 +22,7 @@ pub fn test_config(
         waku_addr: None,
         boot_node_addresses: vec![],
         waku_log_level: None,
-        log_level: "off,hyper=off,graphcast_sdk=trace,poi_radio=trace,poi-radio-e2e-tests=trace"
-            .to_string(),
+        log_level: "off,hyper=off,graphcast_sdk=info,poi_radio=info,test_runner=trace".to_string(),
         slack_token: None,
         slack_channel: None,
         discord_webhook: None,
@@ -40,9 +30,9 @@ pub fn test_config(
         metrics_port: None,
         server_host: String::new(),
         server_port: None,
-        persistence_file_path: Some("./test-runner/state.json".to_string()),
+        persistence_file_path: None,
         log_format: "pretty".to_string(),
-        radio_name,
+        radio_name: String::new(),
         telegram_chat_id: None,
         telegram_token: None,
         discv5_enrs: None,

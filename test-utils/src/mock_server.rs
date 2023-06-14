@@ -6,7 +6,7 @@ use std::{convert::Infallible, net::SocketAddr, str::FromStr};
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 
-pub async fn start_mock_server(address: &str) {
+pub async fn start_mock_server(address: String) {
     // Define the HTTP handlers
     let app = Router::new()
         .route("/graphql", post(handler_graphql))
@@ -19,7 +19,7 @@ pub async fn start_mock_server(address: &str) {
         );
 
     // Create the server and start listening for requests
-    let addr = SocketAddr::from_str(address).unwrap();
+    let addr = SocketAddr::from_str(&address).unwrap();
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .await

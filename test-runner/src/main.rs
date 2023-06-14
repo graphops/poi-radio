@@ -1,154 +1,32 @@
-use std::process::{Child, Command};
-use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use graphcast_sdk::init_tracing;
-use poi_radio::config::CoverageLevel;
-use poi_radio::state::PersistedState;
+use test_runner::{message_handling::send_and_receive_test, topics::topics_test};
 use test_utils::config::test_config;
-use test_utils::mock_server::start_mock_server;
-use tokio::time::{sleep, Duration};
-use tracing::{info, trace};
-
-struct Cleanup {
-    sender: Arc<Mutex<Child>>,
-    radio: Arc<Mutex<Child>>,
-}
-
-impl Drop for Cleanup {
-    fn drop(&mut self) {
-        let _ = self.sender.lock().unwrap().kill();
-        let _ = self.radio.lock().unwrap().kill();
-    }
-}
+use tracing::info;
 
 #[tokio::main]
 pub async fn main() {
+    let config = test_config();
+
     std::env::set_var(
         "RUST_LOG",
-        "off,hyper=off,graphcast_sdk=debug,poi_radio=debug,poi-radio-e2e-tests=debug,test_runner=debug,sender=debug,radio=debug",
+        "off,hyper=off,graphcast_sdk=debug,poi_radio=debug,test_runner=debug,test_sender=debug,test_utils=debug",
     );
-    init_tracing("pretty".to_string()).expect("Could not set up global default subscriber for logger, check environmental variable `RUST_LOG` or the CLI input `log-level");
+    init_tracing(config.log_format).expect("Could not set up global default subscriber for logger, check environmental variable `RUST_LOG` or the CLI input `log-level");
 
-    info!("Starting");
+    let start_time = Instant::now();
 
-    let id = uuid::Uuid::new_v4().to_string();
-    std::env::set_var("TEST_RUN_ID", &id);
+    let send_and_receive_task = tokio::spawn(send_and_receive_test());
+    let topics_test_task = tokio::spawn(topics_test());
 
-    let sender = Arc::new(Mutex::new(
-        Command::new("cargo")
-            .arg("run")
-            .arg("-p")
-            .arg("test-sender")
-            .spawn()
-            .expect("Failed to start command"),
-    ));
+    let (_send_and_receive_result, _topics_test_result) =
+        tokio::join!(send_and_receive_task, topics_test_task);
 
-    let host = "127.0.0.1:8085";
-    tokio::spawn(start_mock_server(host));
+    let elapsed_time = start_time.elapsed();
 
-    let config = test_config(
-        format!("http://{}/graphql", host),
-        format!("http://{}/registry-subgraph", host),
-        format!("http://{}/network-subgraph", host),
+    info!(
+        "All checks passed ✅. Time elapsed: {}s",
+        elapsed_time.as_secs()
     );
-
-    let radio = Arc::new(Mutex::new(
-        Command::new("cargo")
-            .arg("run")
-            .arg("-p")
-            .arg("poi-radio")
-            .arg("--")
-            .arg("--graph-node-endpoint")
-            .arg(&config.graph_node_endpoint)
-            .arg("--private-key")
-            .arg(config.private_key.as_deref().unwrap_or("None"))
-            .arg("--registry-subgraph")
-            .arg(&config.registry_subgraph)
-            .arg("--network-subgraph")
-            .arg(&config.network_subgraph)
-            .arg("--graphcast-network")
-            .arg(&config.graphcast_network)
-            .arg("--topics")
-            .arg(config.topics.join(","))
-            .arg("--coverage")
-            .arg(match config.coverage {
-                CoverageLevel::Minimal => "minimal",
-                CoverageLevel::OnChain => "on-chain",
-                CoverageLevel::Comprehensive => "comprehensive",
-            })
-            .arg("--collect-message-duration")
-            .arg(config.collect_message_duration.to_string())
-            .arg("--waku-log-level")
-            .arg(config.waku_log_level.as_deref().unwrap_or("None"))
-            .arg("--log-level")
-            .arg(&config.log_level)
-            .arg("--slack-token")
-            .arg(config.slack_token.as_deref().unwrap_or("None"))
-            .arg("--slack-channel")
-            .arg(config.slack_channel.as_deref().unwrap_or("None"))
-            .arg("--discord-webhook")
-            .arg(config.discord_webhook.as_deref().unwrap_or("None"))
-            .arg("--persistence-file-path")
-            .arg(config.persistence_file_path.as_deref().unwrap_or("None"))
-            .arg("--log-format")
-            .arg(&config.log_format)
-            .arg("--radio-name")
-            .arg(&config.radio_name)
-            .spawn()
-            .expect("Failed to start command"),
-    ));
-
-    let cleanup = Cleanup {
-        sender: Arc::clone(&sender),
-        radio: Arc::clone(&radio),
-    };
-
-    // Wait for 3 minutes asynchronously
-    sleep(Duration::from_secs(180)).await;
-
-    // Kill the processes
-    let _ = cleanup.sender.lock().unwrap().kill();
-    let _ = cleanup.radio.lock().unwrap().kill();
-
-    // Read the content of the state.json file
-    let state_file_path = "./test-runner/state.json";
-    let persisted_state = PersistedState::load_cache(state_file_path);
-    trace!("persisted state {:?}", persisted_state);
-
-    let local_attestations = persisted_state.local_attestations();
-
-    assert!(
-        !local_attestations.is_empty(),
-        "There should be at least one element in local_attestations"
-    );
-
-    let test_hashes_local = vec![
-        "QmpRkaVUwUQAwPwWgdQHYvw53A5gh3CP3giWnWQZdA2BTE",
-        "QmtYT8NhPd6msi1btMc3bXgrfhjkJoC4ChcM5tG6fyLjHE",
-    ];
-
-    for test_hash in test_hashes_local {
-        assert!(
-            local_attestations.contains_key(test_hash),
-            "No attestation found with ipfs hash {}",
-            test_hash
-        );
-    }
-
-    let remote_messages = persisted_state.remote_messages();
-
-    let test_hashes_remote = vec!["QmtYT8NhPd6msi1btMc3bXgrfhjkJoC4ChcM5tG6fyLjHE"];
-
-    for target_id in test_hashes_remote {
-        let has_target_id = remote_messages
-            .iter()
-            .any(|msg| msg.identifier == *target_id);
-        assert!(
-            has_target_id,
-            "No remote message found with identifier {}",
-            target_id
-        );
-    }
-
-    info!("All checks passed ✅");
 }
