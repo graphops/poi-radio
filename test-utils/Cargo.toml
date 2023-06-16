@@ -22,7 +22,7 @@ categories = [
 
 [dependencies]
 waku = { version = "0.1.0", package = "waku-bindings" }
-graphcast-sdk = { git = "https://github.com/graphops/graphcast-sdk" }
+graphcast-sdk = "0.3.3"
 poi-radio = { path = "../poi-radio" }
 tokio = { version = "1.1.1", features = ["full", "rt"] }
 tracing = "0.1"

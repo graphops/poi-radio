@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Bug Fixes
 
 - Server context types
+- Remove double Arc Mutex from state types
 
 ### Features
 
@@ -14,18 +15,23 @@ All notable changes to this project will be documented in this file.
 - Add telegram notifications
 - Discv5 configs
 - Add e2e tests
+- Serves represented indexer info query
 
 ### Miscellaneous Tasks
 
 - Release 0.3.2
 - Release 0.3.3
 - Release 0.3.4
+- Update sdk version
+- Release 0.3.5
 
 ### Refactor
 
 - Operator struct replaces global mutex
 - Update interval constants
 - Remove 'v' prefix from release tag
+- New ratio formatting
+- Update logging level
 
 ## [0.3.1] - 2023-05-22
 
