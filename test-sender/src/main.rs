@@ -13,9 +13,10 @@ use graphcast_sdk::{
 use poi_radio::RadioPayloadMessage;
 use rand::RngCore;
 use ring::digest;
-use tracing::info;
+
 use waku::{
-    waku_new, GossipSubParams, ProtocolId, WakuContentTopic, WakuNodeConfig, WakuPubSubTopic,
+    waku_new, GossipSubParams, ProtocolId, WakuContentTopic, WakuLogLevel, WakuNodeConfig,
+    WakuPubSubTopic,
 };
 
 fn generate_random_poi() -> String {
@@ -38,7 +39,7 @@ fn generate_random_poi() -> String {
 pub async fn main() {
     std::env::set_var(
         "RUST_LOG",
-        "off,hyper=off,graphcast_sdk=trace,poi_radio=trace,poi-radio-e2e-tests=trace",
+        "off,hyper=off,graphcast_sdk=trace,poi_radio=trace,test_sender=trace,gowaku=trace,go_waku=trace",
     );
     init_tracing("pretty".to_string()).expect("Could not set up global default subscriber for logger, check environmental variable `RUST_LOG` or the CLI input `log-level");
 
@@ -57,9 +58,9 @@ pub async fn main() {
         relay: Some(false), // Default true - will receive all msg on relay
         min_peers_to_publish: Some(0), // Default 0
         filter: Some(true), // Default false
-        log_level: None,
+        log_level: Some(WakuLogLevel::Debug),
         relay_topics: [].to_vec(),
-        discv5: Some(false),
+        discv5: Some(true),
         discv5_bootstrap_nodes: [].to_vec(),
         discv5_udp_port: None,
         store: None,
@@ -108,13 +109,13 @@ pub async fn main() {
         );
         let content_topic = WakuContentTopic::from_str(&content_topic).unwrap();
 
-        let sent = graphcast_message.send_to_waku(
-            &node_handle,
-            WakuPubSubTopic::from_str("/waku/2/graphcast-v0-testnet/proto").unwrap(),
-            content_topic,
-        );
-
-        info!("Message is sent {:?}", sent);
+        let _sent = graphcast_message
+            .send_to_waku(
+                &node_handle,
+                WakuPubSubTopic::from_str("/waku/2/graphcast-v0-testnet/proto").unwrap(),
+                content_topic,
+            )
+            .unwrap();
 
         sleep(Duration::from_secs(5));
     }
