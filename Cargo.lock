@@ -2323,6 +2323,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphcast-sdk"
+version = "0.3.3"
+source = "git+https://github.com/graphops/graphcast-sdk#89fb08f88e548980dfa27f2155ac878b54a049e5"
+dependencies = [
+ "anyhow",
+ "async-graphql",
+ "async-graphql-axum",
+ "chrono",
+ "clap",
+ "data-encoding",
+ "derive-getters",
+ "dotenv",
+ "ethers",
+ "ethers-contract",
+ "ethers-core 2.0.6",
+ "ethers-derive-eip712",
+ "graphql_client 0.12.0",
+ "lazy_static",
+ "num-bigint",
+ "num-traits",
+ "once_cell",
+ "partial_application",
+ "prometheus-http-query",
+ "prost",
+ "reqwest",
+ "rsb_derive",
+ "secp256k1 0.27.0",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "slack-morphism",
+ "teloxide",
+ "thiserror",
+ "tokio",
+ "toml 0.7.4",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "waku-bindings",
+]
+
+[[package]]
 name = "graphql-introspection-query"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3834,7 +3876,7 @@ dependencies = [
  "ethers-contract",
  "ethers-core 2.0.6",
  "ethers-derive-eip712",
- "graphcast-sdk",
+ "graphcast-sdk 0.3.3 (git+https://github.com/graphops/graphcast-sdk)",
  "graphql_client 0.9.0",
  "hex",
  "metrics",
@@ -4617,6 +4659,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "secp256k1"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25996b82292a7a57ed3508f052cfff8640d38d32018784acd714758b43da9c8f"
+dependencies = [
+ "secp256k1-sys 0.8.1",
+]
+
+[[package]]
 name = "secp256k1-sys"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5292,7 +5343,7 @@ version = "0.0.1"
 dependencies = [
  "axum 0.5.17",
  "chrono",
- "graphcast-sdk",
+ "graphcast-sdk 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "poi-radio",
  "rand 0.8.5",
  "serde",
@@ -5313,7 +5364,7 @@ version = "0.0.1"
 dependencies = [
  "axum 0.5.17",
  "chrono",
- "graphcast-sdk",
+ "graphcast-sdk 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "poi-radio",
  "rand 0.8.5",
  "ring",
@@ -5331,7 +5382,7 @@ version = "0.0.1"
 dependencies = [
  "axum 0.5.17",
  "chrono",
- "graphcast-sdk",
+ "graphcast-sdk 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "poi-radio",
  "rand 0.8.5",
  "tokio",
@@ -5980,9 +6031,9 @@ checksum = "9d5b2c62b4012a3e1eca5a7e077d13b3bf498c4073e33ccd58626607748ceeca"
 
 [[package]]
 name = "waku-bindings"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7530f42b2e0bd464cc099eadb015d661e90ac5adfbfbfb3819e8f6b10d4e216b"
+checksum = "c7a89ee47bda6b6fef5e4bd304722e35c94627bd7446870129a5c5fa6d2545fe"
 dependencies = [
  "aes-gcm",
  "base64 0.21.2",
@@ -6002,9 +6053,9 @@ dependencies = [
 
 [[package]]
 name = "waku-sys"
-version = "0.1.0-rc.3"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd124f5938468c41635d4b07d8de2a4fb8ac3d619d22d270e21b1957730e3912"
+checksum = "2b86972863fbd4aba650a2908107d2659adeddef3ee6fb8c98e1b13256dfdca7"
 dependencies = [
  "bindgen",
 ]

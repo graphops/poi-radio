@@ -15,7 +15,7 @@ use graphcast_sdk::{
     init_tracing,
 };
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 use crate::state::PersistedState;
 use crate::{active_allocation_hashes, syncing_deployment_hashes};
@@ -269,6 +269,8 @@ pub struct Config {
         default_value = "poi-radio"
     )]
     pub radio_name: String,
+    #[clap(long, value_name = "FILTER_PROTOCOL", env = "ENABLE_FILTER_PROTOCOL")]
+    pub filter_protocol: Option<bool>,
 }
 
 impl Config {
@@ -321,7 +323,7 @@ impl Config {
             self.waku_host.clone(),
             self.waku_port.clone(),
             self.waku_addr.clone(),
-            Some(false),
+            self.filter_protocol,
             self.discv5_enrs.clone(),
             self.discv5_port,
         )
@@ -361,7 +363,7 @@ impl Config {
             //TODO: set up synchronous panic hook as part of PersistedState functions
             // panic_hook(&path);
             let state = PersistedState::load_cache(path);
-            debug!(
+            trace!(
                 state = tracing::field::debug(&state),
                 "Loaded Persisted state cache"
             );

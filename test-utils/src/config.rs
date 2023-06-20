@@ -47,5 +47,6 @@ pub fn test_config(
         telegram_token: None,
         discv5_enrs: None,
         discv5_port: None,
+        filter_protocol: None,
     }
 }
