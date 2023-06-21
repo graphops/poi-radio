@@ -2287,8 +2287,9 @@ dependencies = [
 
 [[package]]
 name = "graphcast-sdk"
-version = "0.3.3"
-source = "git+https://github.com/graphops/graphcast-sdk#89fb08f88e548980dfa27f2155ac878b54a049e5"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f280b49f7aa775a9b193ff35ae9d3063f4db2156b9c1160f8610d3a385ffb593"
 dependencies = [
  "anyhow",
  "async-graphql",
@@ -3822,7 +3823,7 @@ dependencies = [
 
 [[package]]
 name = "poi-radio"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "async-graphql",
@@ -4505,9 +4506,9 @@ dependencies = [
 
 [[package]]
 name = "scale-info"
-version = "2.7.0"
+version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b569c32c806ec3abdf3b5869fb8bf1e0d275a7c1c9b0b05603d9464632649edf"
+checksum = "ad560913365790f17cbf12479491169f01b9d46d29cfc7422bf8c64bdc61b731"
 dependencies = [
  "cfg-if",
  "derive_more",
@@ -4517,9 +4518,9 @@ dependencies = [
 
 [[package]]
 name = "scale-info-derive"
-version = "2.6.0"
+version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53012eae69e5aa5c14671942a5dd47de59d4cdcff8532a6dd0e081faf1119482"
+checksum = "19df9bd9ace6cc2fe19387c96ce677e823e07d017ceed253e7bb3d1d1bd9c73b"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",

@@ -24,6 +24,8 @@ All notable changes to this project will be documented in this file.
 - Release 0.3.4
 - Update sdk version
 - Release 0.3.5
+- Update tests
+- Release 0.3.6
 
 ### Refactor
 
@@ -32,6 +34,7 @@ All notable changes to this project will be documented in this file.
 - Remove 'v' prefix from release tag
 - New ratio formatting
 - Update logging level
+- Update to new sdk versions
 
 ## [0.3.1] - 2023-05-22
 

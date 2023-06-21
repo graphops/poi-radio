@@ -1,6 +1,7 @@
 [workspace]
 
 members = ["poi-radio", "test-sender", "test-utils", "test-runner"]
+resolver = "2"
 
 [profile.dev]
 debug = true
