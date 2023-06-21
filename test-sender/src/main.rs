@@ -5,7 +5,7 @@ use graphcast_sdk::{
     build_wallet,
     graphcast_agent::{
         message_typing::GraphcastMessage,
-        waku_handling::{connect_multiaddresses, gather_nodes},
+        waku_handling::{connect_multiaddresses, gather_nodes, get_dns_nodes},
     },
     init_tracing,
     networks::NetworkName,
@@ -13,7 +13,7 @@ use graphcast_sdk::{
 use poi_radio::RadioPayloadMessage;
 use rand::RngCore;
 use ring::digest;
-use tracing::info;
+use tracing::{error, info};
 use waku::{
     waku_new, GossipSubParams, ProtocolId, WakuContentTopic, WakuNodeConfig, WakuPubSubTopic,
 };
@@ -38,7 +38,7 @@ fn generate_random_poi() -> String {
 pub async fn main() {
     std::env::set_var(
         "RUST_LOG",
-        "off,hyper=off,graphcast_sdk=trace,poi_radio=trace,poi-radio-e2e-tests=trace",
+        "off,hyper=off,graphcast_sdk=trace,poi_radio=trace,test_sender=trace",
     );
     init_tracing("pretty".to_string()).expect("Could not set up global default subscriber for logger, check environmental variable `RUST_LOG` or the CLI input `log-level");
 
@@ -48,6 +48,14 @@ pub async fn main() {
         ..Default::default()
     };
 
+    let pubsub_topic = WakuPubSubTopic::from_str("/waku/2/graphcast-v0-testnet/proto").unwrap();
+
+    let discv5_nodes: Vec<String> = get_dns_nodes(&pubsub_topic)
+        .into_iter()
+        .filter(|d| d.enr.is_some())
+        .map(|d| d.enr.unwrap().to_string())
+        .collect::<Vec<String>>();
+
     let node_config = WakuNodeConfig {
         host: IpAddr::from_str("127.0.0.1").ok(),
         port: Some(60002),
@@ -56,11 +64,11 @@ pub async fn main() {
         keep_alive_interval: None,
         relay: Some(false), // Default true - will receive all msg on relay
         min_peers_to_publish: Some(0), // Default 0
-        filter: Some(true), // Default false
+        filter: Some(true), // Default false¡
         log_level: None,
         relay_topics: [].to_vec(),
         discv5: Some(false),
-        discv5_bootstrap_nodes: [].to_vec(),
+        discv5_bootstrap_nodes: discv5_nodes,
         discv5_udp_port: None,
         store: None,
         database_url: None,
@@ -94,8 +102,6 @@ pub async fn main() {
         .await
         .unwrap();
 
-        let pubsub_topic = WakuPubSubTopic::from_str("/waku/2/graphcast-v0-testnet/proto").unwrap();
-
         let nodes = gather_nodes(vec![], &pubsub_topic);
         // Connect to peers on the filter protocol
         connect_multiaddresses(nodes, &node_handle, ProtocolId::Filter);
@@ -108,13 +114,15 @@ pub async fn main() {
         );
         let content_topic = WakuContentTopic::from_str(&content_topic).unwrap();
 
-        let sent = graphcast_message.send_to_waku(
+        if let Err(e) = graphcast_message.send_to_waku(
             &node_handle,
             WakuPubSubTopic::from_str("/waku/2/graphcast-v0-testnet/proto").unwrap(),
             content_topic,
-        );
-
-        info!("Message is sent {:?}", sent);
+        ) {
+            error!("Failed to send message: {:?}", e);
+        } else {
+            info!("Message sent successfully");
+        }
 
         sleep(Duration::from_secs(5));
     }
