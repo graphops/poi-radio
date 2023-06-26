@@ -98,6 +98,7 @@ pub async fn main() {
             NetworkName::Goerli,
             timestamp.try_into().unwrap(),
             "4dbba1ba9fb18b0034965712598be1368edcf91ae2c551d59462aab578dab9c5".to_string(),
+            "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
         )
         .await
         .unwrap();

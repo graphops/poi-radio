@@ -1,6 +1,7 @@
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 
+use graphcast_sdk::graphcast_agent::message_typing::IdentityValidation;
 use graphcast_sdk::init_tracing;
 use poi_radio::config::CoverageLevel;
 use poi_radio::state::PersistedState;
@@ -64,6 +65,8 @@ pub async fn main() {
             .arg(config.private_key.as_deref().unwrap_or("None"))
             .arg("--registry-subgraph")
             .arg(&config.registry_subgraph)
+            .arg("--indexer-address")
+            .arg(&config.indexer_address)
             .arg("--network-subgraph")
             .arg(&config.network_subgraph)
             .arg("--graphcast-network")
@@ -94,6 +97,15 @@ pub async fn main() {
             .arg(&config.log_format)
             .arg("--radio-name")
             .arg(&config.radio_name)
+            .arg("--id-validation")
+            .arg(match config.id_validation {
+                Some(IdentityValidation::NoCheck) => "no-check",
+                Some(IdentityValidation::ValidAddress) => "valid-address",
+                Some(IdentityValidation::GraphNetworkAccount) => "graph-network-account",
+                Some(IdentityValidation::GraphcastRegistered) => "graphcast-registered",
+                Some(IdentityValidation::Indexer) => "indexer",
+                _ => "registered-indexer",
+            })
             .spawn()
             .expect("Failed to start command"),
     ));

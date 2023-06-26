@@ -7,12 +7,14 @@ use ethers::signers::WalletError;
 use graphcast_sdk::{
     build_wallet,
     callbook::CallBook,
-    graphcast_agent::{GraphcastAgent, GraphcastAgentConfig, GraphcastAgentError},
-    graphcast_id_address,
-    graphql::{
-        client_network::query_network_subgraph, client_registry::query_registry_indexer, QueryError,
+    graphcast_agent::{
+        message_typing::IdentityValidation, GraphcastAgent, GraphcastAgentConfig,
+        GraphcastAgentError,
     },
-    init_tracing,
+    graphql::{
+        client_network::query_network_subgraph, client_registry::query_registry, QueryError,
+    },
+    init_tracing, wallet_address,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, trace};
@@ -60,6 +62,13 @@ pub struct Config {
         help = "Mnemonic to the Graphcast ID wallet (first address of the wallet is used; Only one of private key or mnemonic is needed)",
     )]
     pub mnemonic: Option<String>,
+    #[clap(
+        long,
+        value_name = "INDEXER_ADDRESS",
+        env = "INDEXER_ADDRESS",
+        help = "Graph account corresponding to Graphcast operator"
+    )]
+    pub indexer_address: String,
     #[clap(
         long,
         value_name = "SUBGRAPH",
@@ -271,6 +280,21 @@ pub struct Config {
     pub radio_name: String,
     #[clap(long, value_name = "FILTER_PROTOCOL", env = "ENABLE_FILTER_PROTOCOL")]
     pub filter_protocol: Option<bool>,
+    #[clap(
+        long,
+        value_name = "ID_VALIDATION",
+        value_enum,
+        env = "ID_VALIDATION",
+        help = "Identity validaiton mechanism for message signers",
+        long_help = "Identity validaiton mechanism for message signers\n
+        no-check: all messages signer is valid, \n
+        valid-address: signer needs to be an valid Eth address, \n
+        graphcast-registered: must be registered at Graphcast Registry, \n
+        graph-network-account: must be a Graph account, \n
+        registered-indexer: must be registered at Graphcast Registry, correspond to and Indexer statisfying indexer minimum stake requirement, \n
+        indexer: must be registered at Graphcast Registry or is a Graph Account, correspond to and Indexer statisfying indexer minimum stake requirement"
+    )]
+    pub id_validation: Option<IdentityValidation>,
 }
 
 impl Config {
@@ -288,7 +312,7 @@ impl Config {
     fn parse_key(value: &str) -> Result<String, WalletError> {
         // The wallet can be stored instead of the original private key
         let wallet = build_wallet(value)?;
-        let address = graphcast_id_address(&wallet);
+        let address = wallet_address(&wallet);
         info!(address, "Resolved Graphcast id");
         Ok(String::from(value))
     }
@@ -312,6 +336,7 @@ impl Config {
 
         GraphcastAgentConfig::new(
             wallet_key,
+            self.indexer_address.clone(),
             self.radio_name.clone(),
             self.registry_subgraph.clone(),
             self.network_subgraph.clone(),
@@ -326,6 +351,7 @@ impl Config {
             self.filter_protocol,
             self.discv5_enrs.clone(),
             self.discv5_port,
+            self.id_validation.clone(),
         )
         .await
     }
@@ -339,11 +365,8 @@ impl Config {
         .map_err(|e| QueryError::Other(e.into()))?;
         // The query here must be Ok but so it is okay to panic here
         // Alternatively, make validate_set_up return wallet, address, and stake
-        let my_address = query_registry_indexer(
-            self.registry_subgraph.to_string(),
-            graphcast_id_address(&wallet),
-        )
-        .await?;
+        let my_address =
+            query_registry(self.registry_subgraph.to_string(), wallet_address(&wallet)).await?;
         let my_stake =
             query_network_subgraph(self.network_subgraph.to_string(), my_address.clone())
                 .await

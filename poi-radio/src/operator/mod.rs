@@ -11,11 +11,7 @@ use tracing::{debug, error, info, trace, warn};
 use graphcast_sdk::{
     build_wallet,
     graphcast_agent::{message_typing::GraphcastMessage, GraphcastAgent},
-    graphcast_id_address,
-    graphql::{
-        client_graph_node::{subgraph_network_blocks, update_network_chainheads},
-        client_registry::query_registry_indexer,
-    },
+    graphql::client_graph_node::{subgraph_network_blocks, update_network_chainheads},
 };
 
 use crate::chainhead_block_str;
@@ -86,7 +82,6 @@ pub struct RadioOperator {
     graphcast_agent: Arc<GraphcastAgent>,
     notifier: Notifier,
     control_flow: ControlFlow,
-    indexer_address: String,
 }
 
 impl RadioOperator {
@@ -94,20 +89,12 @@ impl RadioOperator {
     /// graphcast agent, and control flow
     pub async fn new(config: Config) -> RadioOperator {
         debug!("Initializing Radio operator");
-        let wallet = build_wallet(
+        let _wallet = build_wallet(
             config
                 .wallet_input()
                 .expect("Operator wallet input invalid"),
         )
         .expect("Radio operator cannot build wallet");
-        // The query here must be Ok but so it is okay to panic here
-        // Alternatively, make validate_set_up return wallet, address, and stake
-        let indexer_address = query_registry_indexer(
-            config.registry_subgraph.to_string(),
-            graphcast_id_address(&wallet),
-        )
-        .await
-        .expect("Radio operator registered to indexer");
 
         debug!("Initializing program state");
         // Initialize program state
@@ -131,7 +118,6 @@ impl RadioOperator {
             graphcast_agent,
             notifier,
             control_flow: ControlFlow::new(),
-            indexer_address,
         }
     }
 
@@ -147,7 +133,7 @@ impl RadioOperator {
         // Provide generated topics to Graphcast agent
         let topics = self
             .config
-            .generate_topics(self.indexer_address.clone())
+            .generate_topics(self.config.indexer_address.clone())
             .await;
         debug!(
             topics = tracing::field::debug(&topics),
@@ -241,7 +227,7 @@ impl RadioOperator {
                     // Update topic subscription
                     let result = timeout(update_timeout,
                         self.graphcast_agent()
-                        .update_content_topics(self.config.generate_topics(self.indexer_address.clone()).await)
+                        .update_content_topics(self.config.generate_topics(self.config.indexer_address.clone()).await)
                     ).await;
 
                     if result.is_err() {

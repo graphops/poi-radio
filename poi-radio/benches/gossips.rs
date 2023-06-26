@@ -1,5 +1,6 @@
 use criterion::async_executor::FuturesExecutor;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use graphcast_sdk::graphcast_agent::message_typing::IdentityValidation;
 use poi_radio::operator::RadioOperator;
 
 use rand::{thread_rng, Rng};
@@ -20,6 +21,7 @@ fn gossip_poi_bench(c: &mut Criterion) {
 
     let config = black_box(Config {
         radio_name: String::from("test"),
+        indexer_address: String::from("indexer_address"),
         graph_node_endpoint: String::from("http://localhost:8030/graphql"),
         private_key: Some(pk.display_secret().to_string()),
         mnemonic: None,
@@ -54,6 +56,7 @@ fn gossip_poi_bench(c: &mut Criterion) {
         discv5_enrs: None,
         discv5_port: None,
         filter_protocol: None,
+        id_validation: Some(IdentityValidation::NoCheck),
     });
 
     c.bench_function("gossip_poi", move |b| {

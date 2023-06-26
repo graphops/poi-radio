@@ -12,9 +12,8 @@ use std::{
 
 use tracing::{debug, error, info, trace, warn};
 
-use graphcast_sdk::{
-    graphcast_agent::message_typing::{get_indexer_stake, BuildMessageError, GraphcastMessage},
-    graphql::client_registry::query_registry_indexer,
+use graphcast_sdk::graphcast_agent::message_typing::{
+    get_indexer_stake, BuildMessageError, GraphcastMessage,
 };
 
 use crate::{
@@ -109,7 +108,6 @@ pub fn attestations_to_vec(attestations: &LocalAttestationsMap) -> Vec<Attestati
 #[autometrics]
 pub async fn process_messages(
     messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
-    registry_subgraph: &str,
     network_subgraph: &str,
 ) -> Result<RemoteAttestationsMap, AttestationError> {
     let mut remote_attestations: RemoteAttestationsMap = HashMap::new();
@@ -125,13 +123,7 @@ pub async fn process_messages(
     for msg in messages.iter() {
         let radio_msg = &msg.payload.clone().unwrap();
         let npoi = radio_msg.payload_content().to_string();
-        let sender = msg
-            .recover_sender_address()
-            .map_err(AttestationError::BuildError)?;
-        let indexer_address = query_registry_indexer(registry_subgraph.to_string(), sender.clone())
-            .await
-            .map_err(|e| AttestationError::BuildError(BuildMessageError::FieldDerivations(e)))?;
-        let sender_stake = get_indexer_stake(indexer_address.clone(), network_subgraph)
+        let sender_stake = get_indexer_stake(msg.graph_account.clone(), network_subgraph)
             .await
             .map_err(|e| AttestationError::BuildError(BuildMessageError::FieldDerivations(e)))?;
 
@@ -146,7 +138,7 @@ pub async fn process_messages(
         if let Some(existing_attestation) = existing_attestation {
             if let Ok(updated_attestation) = Attestation::update(
                 existing_attestation,
-                indexer_address,
+                msg.graph_account.clone(),
                 sender_stake,
                 msg.nonce,
             ) {
@@ -158,7 +150,7 @@ pub async fn process_messages(
             attestations.push(Attestation::new(
                 radio_msg.payload_content().to_string(),
                 sender_stake,
-                vec![indexer_address],
+                vec![msg.graph_account.clone()],
                 vec![msg.nonce],
             ));
         }

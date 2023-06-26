@@ -211,6 +211,7 @@ mod tests {
             NetworkName::Goerli,
             block_number,
             block_hash,
+            String::from("0xe9a1cabd57700b17945fd81feefba82340d9568f"),
             sig,
         )
         .expect("Shouldn't get here since the message is purposefully constructed for testing");

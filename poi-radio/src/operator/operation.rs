@@ -181,7 +181,6 @@ pub async fn message_send(
 pub async fn message_comparison(
     id: String,
     collect_window_duration: i64,
-    registry_subgraph: String,
     network_subgraph: String,
     messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
     local_attestations: HashMap<String, HashMap<u64, Attestation>>,
@@ -228,8 +227,7 @@ pub async fn message_comparison(
         number_of_messages_matched_to_compare = filter_msg.len(),
         "Comparison state",
     );
-    let remote_attestations_result =
-        process_messages(filter_msg, &registry_subgraph, &network_subgraph).await;
+    let remote_attestations_result = process_messages(filter_msg, &network_subgraph).await;
     let remote_attestations = match remote_attestations_result {
         Ok(remote) => {
             debug!(unique_remote_nPOIs = remote.len(), "Processed messages",);
@@ -419,7 +417,6 @@ impl RadioOperator {
             /* Set up */
             let collect_duration: i64 = self.config.collect_message_duration().to_owned();
             let id_cloned = id.clone();
-            let registry_subgraph = self.config.registry_subgraph.clone();
             let network_subgraph = self.config.network_subgraph.clone();
             let local_attestations = self.state().local_attestations();
             let filtered_msg = remote_messages
@@ -432,7 +429,6 @@ impl RadioOperator {
                 message_comparison(
                     id_cloned,
                     collect_duration,
-                    registry_subgraph.clone(),
                     network_subgraph.clone(),
                     filtered_msg,
                     local_attestations,

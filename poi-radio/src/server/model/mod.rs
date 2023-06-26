@@ -72,7 +72,6 @@ impl QueryRoot {
         );
 
         let config = ctx.data_unchecked::<Arc<POIRadioContext>>().radio_config();
-        let registry_subgraph = config.registry_subgraph.clone();
         let network_subgraph = config.network_subgraph.clone();
 
         let mut res = vec![];
@@ -85,24 +84,22 @@ impl QueryRoot {
                     Some(entry.block_number),
                 )
                 .await?;
-            let remote_attestations =
-                match process_messages(msgs, &registry_subgraph, &network_subgraph).await {
-                    Ok(r) => {
-                        if let Some(deployment_attestations) = r.get(&deployment_identifier.clone())
+            let remote_attestations = match process_messages(msgs, &network_subgraph).await {
+                Ok(r) => {
+                    if let Some(deployment_attestations) = r.get(&deployment_identifier.clone()) {
+                        if let Some(deployment_block_attestations) =
+                            deployment_attestations.get(&entry.block_number)
                         {
-                            if let Some(deployment_block_attestations) =
-                                deployment_attestations.get(&entry.block_number)
-                            {
-                                deployment_block_attestations.clone()
-                            } else {
-                                continue;
-                            }
+                            deployment_block_attestations.clone()
                         } else {
                             continue;
                         }
+                    } else {
+                        continue;
                     }
-                    Err(_e) => continue,
-                };
+                }
+                Err(_e) => continue,
+            };
 
             let r = compare_attestation(entry, remote_attestations);
             res.push(r);

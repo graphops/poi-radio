@@ -28,6 +28,6 @@ changelog:
     - title: Refactor 🌱
       labels:
         - refactor
-    - title: Other Changes
+    - title: Other Changes 🗳️
       labels:
         - "*"

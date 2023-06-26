@@ -1,5 +1,6 @@
 use std::env;
 
+use graphcast_sdk::graphcast_agent::message_typing::IdentityValidation;
 use poi_radio::config::{Config, CoverageLevel};
 
 pub fn test_config(
@@ -12,6 +13,7 @@ pub fn test_config(
 
     Config {
         graph_node_endpoint,
+        indexer_address: String::from("0x7e6528e4ce3055e829a32b5dc4450072bac28bc6"),
         private_key: Some(
             "ccaea3e3aca412cb3920dbecd77bc725dfe9a5e16f940f19912d9c9dbee01e8f".to_string(),
         ),
@@ -48,5 +50,6 @@ pub fn test_config(
         discv5_enrs: None,
         discv5_port: None,
         filter_protocol: None,
+        id_validation: Some(IdentityValidation::ValidAddress),
     }
 }
