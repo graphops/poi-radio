@@ -1,166 +1,124 @@
-use std::process::{Child, Command};
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::time::Instant;
 
-use graphcast_sdk::graphcast_agent::message_typing::IdentityValidation;
 use graphcast_sdk::init_tracing;
-use poi_radio::config::CoverageLevel;
-use poi_radio::state::PersistedState;
+use test_runner::{
+    invalid_block_hash::invalid_block_hash_test, invalid_nonce::invalid_nonce_test,
+    invalid_payload::invalid_payload_test, invalid_sender::invalid_sender_test,
+    message_handling::send_and_receive_test, topics::topics_test,
+};
 use test_utils::config::test_config;
-use test_utils::mock_server::start_mock_server;
-use tokio::time::{sleep, Duration};
-use tracing::{info, trace};
+use tracing::{error, info};
 
-struct Cleanup {
-    sender: Arc<Mutex<Child>>,
-    radio: Arc<Mutex<Child>>,
-}
+async fn run_tests(
+    tests: Vec<(&str, tokio::task::JoinHandle<()>)>,
+) -> (bool, HashMap<String, bool>) {
+    let mut tests_passed = true;
+    let mut test_results: HashMap<String, bool> = HashMap::new();
 
-impl Drop for Cleanup {
-    fn drop(&mut self) {
-        let _ = self.sender.lock().unwrap().kill();
-        let _ = self.radio.lock().unwrap().kill();
+    for (test_name, test_task) in tests {
+        match test_task.await {
+            Ok(()) => {
+                info!("{} passed ✅", test_name);
+                test_results.insert(test_name.to_string(), true);
+            }
+            Err(_e) => {
+                error!("{} failed ❌", test_name);
+                tests_passed = false;
+                test_results.insert(test_name.to_string(), false);
+            }
+        }
     }
+
+    (tests_passed, test_results)
 }
 
 #[tokio::main]
 pub async fn main() {
+    let config = test_config();
+
     std::env::set_var(
         "RUST_LOG",
-        "off,hyper=off,graphcast_sdk=debug,poi_radio=debug,poi-radio-e2e-tests=debug,test_runner=debug,sender=debug,radio=debug",
+        "off,hyper=off,graphcast_sdk=trace,poi_radio=trace,test_runner=trace,test_sender=trace,test_utils=trace",
     );
-    init_tracing("pretty".to_string()).expect("Could not set up global default subscriber for logger, check environmental variable `RUST_LOG` or the CLI input `log-level");
+    init_tracing(config.log_format).expect("Could not set up global default subscriber for logger, check environmental variable `RUST_LOG` or the CLI input `log-level");
 
-    info!("Starting");
+    let start_time = Instant::now();
 
-    let id = uuid::Uuid::new_v4().to_string();
-    std::env::set_var("TEST_RUN_ID", &id);
-
-    let sender = Arc::new(Mutex::new(
-        Command::new("cargo")
-            .arg("run")
-            .arg("-p")
-            .arg("test-sender")
-            .spawn()
-            .expect("Failed to start command"),
-    ));
-
-    let host = "127.0.0.1:8085";
-    tokio::spawn(start_mock_server(host));
-
-    let config = test_config(
-        format!("http://{}/graphql", host),
-        format!("http://{}/registry-subgraph", host),
-        format!("http://{}/network-subgraph", host),
-    );
-
-    let radio = Arc::new(Mutex::new(
-        Command::new("cargo")
-            .arg("run")
-            .arg("-p")
-            .arg("poi-radio")
-            .arg("--")
-            .arg("--graph-node-endpoint")
-            .arg(&config.graph_node_endpoint)
-            .arg("--private-key")
-            .arg(config.private_key.as_deref().unwrap_or("None"))
-            .arg("--registry-subgraph")
-            .arg(&config.registry_subgraph)
-            .arg("--indexer-address")
-            .arg(&config.indexer_address)
-            .arg("--network-subgraph")
-            .arg(&config.network_subgraph)
-            .arg("--graphcast-network")
-            .arg(&config.graphcast_network)
-            .arg("--topics")
-            .arg(config.topics.join(","))
-            .arg("--coverage")
-            .arg(match config.coverage {
-                CoverageLevel::Minimal => "minimal",
-                CoverageLevel::OnChain => "on-chain",
-                CoverageLevel::Comprehensive => "comprehensive",
-            })
-            .arg("--collect-message-duration")
-            .arg(config.collect_message_duration.to_string())
-            .arg("--waku-log-level")
-            .arg(config.waku_log_level.as_deref().unwrap_or("None"))
-            .arg("--log-level")
-            .arg(&config.log_level)
-            .arg("--slack-token")
-            .arg(config.slack_token.as_deref().unwrap_or("None"))
-            .arg("--slack-channel")
-            .arg(config.slack_channel.as_deref().unwrap_or("None"))
-            .arg("--discord-webhook")
-            .arg(config.discord_webhook.as_deref().unwrap_or("None"))
-            .arg("--persistence-file-path")
-            .arg(config.persistence_file_path.as_deref().unwrap_or("None"))
-            .arg("--log-format")
-            .arg(&config.log_format)
-            .arg("--radio-name")
-            .arg(&config.radio_name)
-            .arg("--id-validation")
-            .arg(match config.id_validation {
-                Some(IdentityValidation::NoCheck) => "no-check",
-                Some(IdentityValidation::ValidAddress) => "valid-address",
-                Some(IdentityValidation::GraphNetworkAccount) => "graph-network-account",
-                Some(IdentityValidation::GraphcastRegistered) => "graphcast-registered",
-                Some(IdentityValidation::Indexer) => "indexer",
-                _ => "registered-indexer",
-            })
-            .spawn()
-            .expect("Failed to start command"),
-    ));
-
-    let cleanup = Cleanup {
-        sender: Arc::clone(&sender),
-        radio: Arc::clone(&radio),
-    };
-
-    // Wait for 3 minutes asynchronously
-    sleep(Duration::from_secs(180)).await;
-
-    // Kill the processes
-    let _ = cleanup.sender.lock().unwrap().kill();
-    let _ = cleanup.radio.lock().unwrap().kill();
-
-    // Read the content of the state.json file
-    let state_file_path = "./test-runner/state.json";
-    let persisted_state = PersistedState::load_cache(state_file_path);
-    trace!("persisted state {:?}", persisted_state);
-
-    let local_attestations = persisted_state.local_attestations();
-
-    assert!(
-        !local_attestations.is_empty(),
-        "There should be at least one element in local_attestations"
-    );
-
-    let test_hashes_local = vec![
-        "QmpRkaVUwUQAwPwWgdQHYvw53A5gh3CP3giWnWQZdA2BTE",
-        "QmtYT8NhPd6msi1btMc3bXgrfhjkJoC4ChcM5tG6fyLjHE",
+    let mut initial_tests = vec![
+        (
+            "send_and_receive_test",
+            tokio::spawn(send_and_receive_test()),
+        ),
+        ("topics_test", tokio::spawn(topics_test())),
     ];
 
-    for test_hash in test_hashes_local {
-        assert!(
-            local_attestations.contains_key(test_hash),
-            "No attestation found with ipfs hash {}",
-            test_hash
-        );
+    let mut retry_count = 3;
+    let mut initial_test_results: Option<HashMap<String, bool>> = None;
+    let mut initial_tests_passed = false;
+
+    while retry_count > 0 && !initial_tests_passed {
+        let (tests_passed, test_results) = run_tests(initial_tests).await;
+        if tests_passed {
+            initial_tests_passed = true;
+        } else {
+            retry_count -= 1;
+        }
+        initial_test_results = Some(test_results);
+
+        // Reinitialize for possible next loop iteration
+        initial_tests = vec![
+            (
+                "send_and_receive_test",
+                tokio::spawn(send_and_receive_test()),
+            ),
+            ("topics_test", tokio::spawn(topics_test())),
+        ];
     }
 
-    let remote_messages = persisted_state.remote_messages();
+    let mut remaining_tests_passed = false;
+    let mut remaining_test_results = HashMap::new();
 
-    let test_hashes_remote = vec!["QmtYT8NhPd6msi1btMc3bXgrfhjkJoC4ChcM5tG6fyLjHE"];
+    if initial_tests_passed {
+        let remaining_tests = vec![
+            (
+                "invalid_block_hash_test",
+                tokio::spawn(invalid_block_hash_test()),
+            ),
+            ("invalid_sender_test", tokio::spawn(invalid_sender_test())),
+            ("invalid_nonce_test", tokio::spawn(invalid_nonce_test())),
+            ("invalid_payload_test", tokio::spawn(invalid_payload_test())),
+        ];
 
-    for target_id in test_hashes_remote {
-        let has_target_id = remote_messages
-            .iter()
-            .any(|msg| msg.identifier == *target_id);
-        assert!(
-            has_target_id,
-            "No remote message found with identifier {}",
-            target_id
-        );
+        let (tests_passed, test_results) = run_tests(remaining_tests).await;
+        remaining_tests_passed = tests_passed;
+        remaining_test_results = test_results;
     }
 
-    info!("All checks passed ✅");
+    let elapsed_time = start_time.elapsed();
+    // Print summary of tests
+    println!("\nTest Summary:\n");
+    for (test_name, passed) in initial_test_results
+        .unwrap()
+        .iter()
+        .chain(&remaining_test_results)
+    {
+        if *passed {
+            info!("{}: PASSED", test_name);
+        } else {
+            error!("{}: FAILED", test_name);
+        }
+    }
+
+    if initial_tests_passed && remaining_tests_passed {
+        info!(
+            "All tests passed ✅. Time elapsed: {}s",
+            elapsed_time.as_secs()
+        );
+    } else {
+        error!(
+            "Some tests failed ❌. Time elapsed: {}s",
+            elapsed_time.as_secs()
+        );
+    }
 }

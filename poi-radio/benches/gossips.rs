@@ -57,6 +57,7 @@ fn gossip_poi_bench(c: &mut Criterion) {
         discv5_port: None,
         filter_protocol: None,
         id_validation: Some(IdentityValidation::NoCheck),
+        topic_update_interval: 600,
     });
 
     c.bench_function("gossip_poi", move |b| {

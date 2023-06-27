@@ -190,7 +190,9 @@ impl RadioOperator {
         let skip_iteration = Arc::new(AtomicBool::new(false));
         let skip_iteration_clone = skip_iteration.clone();
 
-        let mut topic_update_interval = interval(Duration::from_secs(600));
+        let mut topic_update_interval =
+            interval(Duration::from_secs(self.config.topic_update_interval));
+
         let mut state_update_interval = interval(Duration::from_secs(60));
         let mut gossip_poi_interval = interval(Duration::from_secs(30));
         let mut comparison_interval = interval(Duration::from_secs(30));

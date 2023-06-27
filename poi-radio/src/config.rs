@@ -295,6 +295,13 @@ pub struct Config {
         indexer: must be registered at Graphcast Registry or is a Graph Account, correspond to and Indexer statisfying indexer minimum stake requirement"
     )]
     pub id_validation: Option<IdentityValidation>,
+    #[clap(
+        long,
+        value_name = "TOPIC_UPDATE_INTERVAL",
+        env = "TOPIC_UPDATE_INTERVAL",
+        default_value = "600"
+    )]
+    pub topic_update_interval: u64,
 }
 
 impl Config {

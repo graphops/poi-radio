@@ -1,6 +1,7 @@
-use std::{env, net::IpAddr, str::FromStr, thread::sleep, time::Duration};
+use std::{net::IpAddr, str::FromStr, thread::sleep, time::Duration};
 
 use chrono::Utc;
+use clap::Parser;
 use graphcast_sdk::{
     build_wallet,
     graphcast_agent::{
@@ -13,6 +14,7 @@ use graphcast_sdk::{
 use poi_radio::RadioPayloadMessage;
 use rand::RngCore;
 use ring::digest;
+use test_utils::{config::TestSenderConfig, dummy_msg::DummyMsg, find_random_udp_port};
 use tracing::{error, info};
 use waku::{
     waku_new, GossipSubParams, ProtocolId, WakuContentTopic, WakuNodeConfig, WakuPubSubTopic,
@@ -34,8 +36,7 @@ fn generate_random_poi() -> String {
     hash_string
 }
 
-#[tokio::main]
-pub async fn main() {
+async fn start_sender(config: TestSenderConfig) {
     std::env::set_var(
         "RUST_LOG",
         "off,hyper=off,graphcast_sdk=trace,poi_radio=trace,test_sender=trace",
@@ -55,10 +56,12 @@ pub async fn main() {
         .filter(|d| d.enr.is_some())
         .map(|d| d.enr.unwrap().to_string())
         .collect::<Vec<String>>();
+    let port = find_random_udp_port();
+    info!("Starting test sender instance on port {}", port);
 
     let node_config = WakuNodeConfig {
         host: IpAddr::from_str("127.0.0.1").ok(),
-        port: Some(60002),
+        port: Some(port.into()),
         advertise_addr: None, // Fill this for boot nodes
         node_key: None,
         keep_alive_interval: None,
@@ -82,49 +85,90 @@ pub async fn main() {
     let wallet =
         build_wallet("baf5c93f0c8aee3b945f33b9192014e83d50cec25f727a13460f6ef1eb6a5844").unwrap();
 
+    let pubsub_topic_str = "/waku/2/graphcast-v0-testnet/proto";
+    let pubsub_topic = WakuPubSubTopic::from_str(pubsub_topic_str).unwrap();
     loop {
-        let timestamp = Utc::now().timestamp();
-        let timestamp = (timestamp + 9) / 10 * 10;
+        for topic in config.topics.clone() {
+            let timestamp = Utc::now().timestamp();
+            let timestamp = (timestamp + 9) / 10 * 10;
 
-        let radio_payload = RadioPayloadMessage::new(
-            "QmtYT8NhPd6msi1btMc3bXgrfhjkJoC4ChcM5tG6fyLjHE".to_string(),
-            generate_random_poi(),
-        );
+            let nodes = gather_nodes(vec![], &pubsub_topic);
+            // Connect to peers on the filter protocol
+            connect_multiaddresses(nodes, &node_handle, ProtocolId::Filter);
 
-        let graphcast_message = GraphcastMessage::build(
-            &wallet,
-            "QmtYT8NhPd6msi1btMc3bXgrfhjkJoC4ChcM5tG6fyLjHE".to_string(),
-            Some(radio_payload),
-            NetworkName::Goerli,
-            timestamp.try_into().unwrap(),
-            "4dbba1ba9fb18b0034965712598be1368edcf91ae2c551d59462aab578dab9c5".to_string(),
-            "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
-        )
-        .await
-        .unwrap();
+            let content_topic = format!("/{}/0/{}/proto", config.radio_name, topic);
+            let content_topic = WakuContentTopic::from_str(&content_topic).unwrap();
 
-        let nodes = gather_nodes(vec![], &pubsub_topic);
-        // Connect to peers on the filter protocol
-        connect_multiaddresses(nodes, &node_handle, ProtocolId::Filter);
+            let radio_payload_clone = config.radio_payload.clone();
+            match radio_payload_clone.as_deref() {
+                Some("radio_payload_message") => {
+                    let radio_payload =
+                        RadioPayloadMessage::new(topic.clone(), generate_random_poi());
 
-        let id = env::var("TEST_RUN_ID").unwrap_or_else(|_| panic!("TEST_RUN_ID not set"));
+                    let mut graphcast_message = GraphcastMessage::build(
+                        &wallet,
+                        topic.clone(),
+                        Some(radio_payload),
+                        NetworkName::Goerli,
+                        timestamp.try_into().unwrap(),
+                        config.block_hash.clone().unwrap(),
+                        "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
+                    )
+                    .await
+                    .unwrap();
 
-        let content_topic = format!(
-            "/poi-radio-test-{}/0/QmtYT8NhPd6msi1btMc3bXgrfhjkJoC4ChcM5tG6fyLjHE/proto",
-            id
-        );
-        let content_topic = WakuContentTopic::from_str(&content_topic).unwrap();
+                    graphcast_message.nonce = config.nonce.clone().unwrap().parse::<i64>().unwrap();
 
-        if let Err(e) = graphcast_message.send_to_waku(
-            &node_handle,
-            WakuPubSubTopic::from_str("/waku/2/graphcast-v0-testnet/proto").unwrap(),
-            content_topic,
-        ) {
-            error!("Failed to send message: {:?}", e);
-        } else {
-            info!("Message sent successfully");
+                    match graphcast_message.send_to_waku(
+                        &node_handle,
+                        WakuPubSubTopic::from_str("/waku/2/graphcast-v0-testnet/proto").unwrap(),
+                        content_topic,
+                    ) {
+                        Ok(id) => {
+                            info!("Message sent successfully. Mеssage id: {:?}", id);
+                        }
+                        Err(e) => {
+                            error!("Failed to send message: {:?}", e);
+                        }
+                    }
+                }
+                _ => {
+                    let payload = DummyMsg::from_json(&config.radio_payload.clone().unwrap());
+                    let graphcast_message = GraphcastMessage::build(
+                        &wallet,
+                        topic.clone(),
+                        Some(payload),
+                        NetworkName::Goerli,
+                        timestamp.try_into().unwrap(),
+                        config.block_hash.clone().unwrap(),
+                        "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
+                    )
+                    .await
+                    .unwrap();
+
+                    match graphcast_message.send_to_waku(
+                        &node_handle,
+                        WakuPubSubTopic::from_str("/waku/2/graphcast-v0-testnet/proto").unwrap(),
+                        content_topic,
+                    ) {
+                        Ok(id) => {
+                            info!("Message sent successfully. Mеssage id: {:?}", id);
+                        }
+                        Err(e) => {
+                            error!("Failed to send message: {:?}", e);
+                        }
+                    }
+                }
+            }
+
+            sleep(Duration::from_secs(1));
         }
-
-        sleep(Duration::from_secs(5));
+        sleep(Duration::from_secs(1));
     }
+}
+
+#[tokio::main]
+pub async fn main() {
+    let config = TestSenderConfig::parse();
+    start_sender(config).await;
 }

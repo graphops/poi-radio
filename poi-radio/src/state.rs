@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::{
     collections::HashMap,
@@ -105,6 +107,11 @@ impl PersistedState {
         let state_json = serde_json::to_string(&self.clone())
             .unwrap_or_else(|_| "Could not serialize state to JSON".to_owned());
 
+        let path = Path::new(path);
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
         // Write state to file
         let mut file = File::create(path).unwrap();
         file.write_all(state_json.as_bytes()).unwrap();
