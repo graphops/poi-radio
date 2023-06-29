@@ -1,5 +1,4 @@
-use graphcast_sdk::graphcast_agent::message_typing::IdentityValidation;
-use poi_radio::state::PersistedState;
+use poi_radio::{operator::attestation::ComparisonResultType, state::PersistedState};
 use test_utils::{
     config::{test_config, TestSenderConfig},
     setup, teardown,
@@ -7,8 +6,8 @@ use test_utils::{
 use tokio::time::{sleep, Duration};
 use tracing::debug;
 
-pub async fn invalid_sender_test() {
-    let test_file_name = "invalid_sender";
+pub async fn poi_match_test() {
+    let test_file_name = "poi_match";
     let store_path = format!("./test-runner/state/{}.json", test_file_name);
 
     let radio_topics = vec!["Qmdefault1AbcDEFghijKLmnoPQRstUVwxYzABCDEFghijklmnopq".to_string()];
@@ -19,13 +18,12 @@ pub async fn invalid_sender_test() {
     let mut config = test_config();
     config.persistence_file_path = Some(store_path.clone());
     config.topics = radio_topics.clone();
-    config.id_validation = Some(IdentityValidation::RegisteredIndexer);
 
     let mut test_sender_config = TestSenderConfig {
         topics: test_sender_topics,
         radio_name: String::new(),
         block_hash: None,
-        staked_tokens: Some("1".to_string()),
+        staked_tokens: None,
         nonce: None,
         radio_payload: None,
         poi: None,
@@ -33,16 +31,27 @@ pub async fn invalid_sender_test() {
 
     let process_manager = setup(&config, test_file_name, &mut test_sender_config).await;
 
-    sleep(Duration::from_secs(89)).await;
+    sleep(Duration::from_secs(300)).await;
 
     let persisted_state = PersistedState::load_cache(&store_path);
     debug!("persisted state {:?}", persisted_state);
 
-    teardown(process_manager, &store_path);
+    let comparison_results = persisted_state.comparison_results();
 
-    let remote_messages = persisted_state.remote_messages();
     assert!(
-        remote_messages.is_empty(),
-        "Remote messages should be empty"
+        !comparison_results.is_empty(),
+        "The comparison results should not be empty"
     );
+
+    let has_match_result = comparison_results.iter().any(|result| {
+        result.1.deployment == "Qmdefault1AbcDEFghijKLmnoPQRstUVwxYzABCDEFghijklmnopq"
+            && result.1.result_type == ComparisonResultType::Match
+    });
+
+    assert!(
+        has_match_result,
+        "No comparison result found with deployment 'Qmdefault1AbcDEFghijKLmnoPQRstUVwxYzABCDEFghijklmnopq' and result type 'Match'"
+    );
+
+    teardown(process_manager, &store_path);
 }

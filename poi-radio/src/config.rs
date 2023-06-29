@@ -400,7 +400,7 @@ impl Config {
             state
         } else {
             debug!("Created new state");
-            PersistedState::new(None, None)
+            PersistedState::new(None, None, None)
         }
     }
 

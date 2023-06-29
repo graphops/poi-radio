@@ -11,34 +11,47 @@ use tracing::warn;
 
 use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
 
-use crate::operator::attestation::clear_local_attestation;
+use crate::operator::attestation::{
+    clear_local_attestation, ComparisonResult, ComparisonResultType,
+};
+use crate::operator::notifier::Notifier;
 use crate::{operator::attestation::Attestation, RadioPayloadMessage};
 
 type Local = Arc<SyncMutex<HashMap<String, HashMap<u64, Attestation>>>>;
 type Remote = Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>;
+type ComparisonResults = Arc<SyncMutex<HashMap<String, ComparisonResult>>>;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PersistedState {
     pub local_attestations: Local,
     pub remote_messages: Remote,
+    pub comparison_results: ComparisonResults,
 }
 
 impl PersistedState {
-    pub fn new(local: Option<Local>, remote: Option<Remote>) -> PersistedState {
+    pub fn new(
+        local: Option<Local>,
+        remote: Option<Remote>,
+        comparison_results: Option<ComparisonResults>,
+    ) -> PersistedState {
         let local_attestations = local.unwrap_or(Arc::new(SyncMutex::new(HashMap::new())));
         let remote_messages = remote.unwrap_or(Arc::new(SyncMutex::new(vec![])));
+        let comparison_results =
+            comparison_results.unwrap_or(Arc::new(SyncMutex::new(HashMap::new())));
 
         PersistedState {
             local_attestations,
             remote_messages,
+            comparison_results,
         }
     }
 
-    /// Optional updates for either local_attestations or remote_messages without requiring either to be in-scope
+    /// Optional updates for either local_attestations, remote_messages or comparison_results without requiring either to be in-scope
     pub async fn update(
         &mut self,
         local_attestations: Option<Local>,
         remote_messages: Option<Remote>,
+        comparison_results: Option<ComparisonResults>,
     ) -> PersistedState {
         let local_attestations = match local_attestations {
             None => self.local_attestations.clone(),
@@ -48,9 +61,14 @@ impl PersistedState {
             None => self.remote_messages.clone(),
             Some(r) => r,
         };
+        let comparison_results = match comparison_results {
+            None => self.comparison_results.clone(),
+            Some(r) => r,
+        };
         PersistedState {
             local_attestations,
             remote_messages,
+            comparison_results,
         }
     }
 
@@ -72,6 +90,11 @@ impl PersistedState {
         self.remote_messages.lock().unwrap().clone()
     }
 
+    /// Getter for comparison_results
+    pub fn comparison_results(&self) -> HashMap<String, ComparisonResult> {
+        self.comparison_results.lock().unwrap().clone()
+    }
+
     /// Update local_attestations
     pub async fn update_local(&mut self, local_attestations: Local) {
         self.local_attestations = local_attestations;
@@ -85,6 +108,80 @@ impl PersistedState {
     /// Add message to remote_messages
     pub fn add_remote_message(&self, msg: GraphcastMessage<RadioPayloadMessage>) {
         self.remote_messages.lock().unwrap().push(msg)
+    }
+
+    /// Update comparison_results
+    pub fn update_comparison_result(&self, comparison_result: ComparisonResult) {
+        let deployment = comparison_result.clone().deployment;
+
+        self.comparison_results
+            .lock()
+            .unwrap()
+            .insert(deployment, comparison_result);
+    }
+
+    /// Add entry to comparison_results
+    pub fn add_comparison_result(&self, comparison_result: ComparisonResult) {
+        let deployment = comparison_result.clone().deployment;
+
+        self.comparison_results
+            .lock()
+            .unwrap()
+            .insert(deployment, comparison_result);
+    }
+
+    pub async fn handle_comparison_result(
+        &self,
+        new_comparison_result: ComparisonResult,
+        notifier: Notifier,
+    ) -> ComparisonResultType {
+        let (should_notify, updated_comparison_result, result_type) = {
+            let mut results = self.comparison_results.lock().unwrap();
+            let deployment = &new_comparison_result.deployment;
+
+            let current_result = results.get(deployment).cloned();
+
+            let result_type = if !results.contains_key(deployment) {
+                results.insert(deployment.clone(), new_comparison_result.clone());
+                new_comparison_result.result_type
+            } else {
+                match &current_result {
+                    Some(current_result)
+                        if current_result.result_type != new_comparison_result.result_type
+                            && new_comparison_result.result_type
+                                != ComparisonResultType::NotFound =>
+                    {
+                        results.insert(deployment.clone(), new_comparison_result.clone());
+                        new_comparison_result.result_type
+                    }
+                    Some(current_result) => {
+                        if let ComparisonResultType::Match | ComparisonResultType::NotFound =
+                            new_comparison_result.result_type
+                        {
+                            results.insert(deployment.clone(), new_comparison_result.clone());
+                        }
+                        current_result.result_type
+                    }
+                    None => {
+                        results.insert(deployment.clone(), new_comparison_result.clone());
+                        new_comparison_result.result_type
+                    }
+                }
+            };
+
+            let should_notify = result_type != ComparisonResultType::NotFound;
+
+            (should_notify, new_comparison_result.clone(), result_type)
+        };
+
+        if should_notify {
+            notifier
+                .clone()
+                .notify(updated_comparison_result.to_string())
+                .await;
+        }
+
+        result_type
     }
 
     /// Clean remote_messages
@@ -124,7 +221,7 @@ impl PersistedState {
             Err(_) => {
                 warn!("No persisted state file provided, create an empty state");
                 // No state persisted, create new
-                return PersistedState::new(None, None);
+                return PersistedState::new(None, None, None);
             }
         };
 
@@ -137,7 +234,7 @@ impl PersistedState {
                     err = e.to_string(),
                     "Could not parse persisted state file, created an empty state",
                 );
-                PersistedState::new(None, None)
+                PersistedState::new(None, None, None)
             }
         };
         state
@@ -149,7 +246,7 @@ impl PersistedState {
     }
 }
 
-//TODO: panic hook for updating the cache file before exiting the program
+// TODO: panic hook for updating the cache file before exiting the program
 // /// Set up panic hook to store persisted state
 // pub fn panic_hook<'a>(file_path: &str){
 //     let path = String::from_str(file_path).expect("Invalid file path provided");
@@ -164,11 +261,11 @@ impl PersistedState {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use graphcast_sdk::networks::NetworkName;
 
-    use crate::operator::attestation::save_local_attestation;
-
-    use super::*;
+    use crate::operator::attestation::{save_local_attestation, ComparisonResultType};
 
     /// Tests for load, update, and store cache
     #[tokio::test]
@@ -177,11 +274,14 @@ mod tests {
         PersistedState::delete_cache(path);
 
         let mut state = PersistedState::load_cache(path);
-        assert!(state.local_attestations.lock().unwrap().is_empty());
-        assert!(state.remote_messages.lock().unwrap().is_empty());
+        assert!(state.local_attestations().is_empty());
+        assert!(state.remote_messages().is_empty());
+        assert!(state.comparison_results().is_empty());
 
         let local_attestations = Arc::new(SyncMutex::new(HashMap::new()));
         let messages = Arc::new(SyncMutex::new(Vec::new()));
+        let comparison_results = Arc::new(SyncMutex::new(HashMap::new()));
+
         save_local_attestation(
             local_attestations.clone(),
             "npoi-x".to_string(),
@@ -202,6 +302,18 @@ mod tests {
             "0xa2".to_string(),
             2,
         );
+
+        let test_comparison_result = ComparisonResult {
+            deployment: "test_deployment".to_string(),
+            block_number: 42,
+            result_type: ComparisonResultType::Match,
+            local_attestation: None,
+            attestations: vec![],
+        };
+        comparison_results
+            .lock()
+            .unwrap()
+            .insert("test_deployment".to_string(), test_comparison_result);
 
         let hash: String = "QmWECgZdP2YMcV9RtKU41GxcdW8EGYqMNoG98ubu5RGN6U".to_string();
         let content: String =
@@ -225,12 +337,16 @@ mod tests {
         messages.lock().unwrap().push(msg);
 
         state = state
-            .update(Some(local_attestations.clone()), Some(messages.clone()))
+            .update(
+                Some(local_attestations.clone()),
+                Some(messages.clone()),
+                Some(comparison_results.clone()),
+            )
             .await;
         state.update_cache(path);
 
         let state = PersistedState::load_cache(path);
-        assert!(state.remote_messages.lock().unwrap().len() == 1);
+        assert_eq!(state.remote_messages.lock().unwrap().len(), 1);
         assert!(!state.local_attestations.lock().unwrap().is_empty());
         assert!(state.local_attestations.lock().unwrap().len() == 2);
         assert!(
@@ -266,6 +382,96 @@ mod tests {
                 == *"npoi-x"
         );
 
+        assert_eq!(state.comparison_results.lock().unwrap().len(), 1);
+        assert_eq!(
+            state
+                .comparison_results
+                .lock()
+                .unwrap()
+                .get("test_deployment")
+                .unwrap()
+                .block_number,
+            42
+        );
+        assert_eq!(
+            state
+                .comparison_results
+                .lock()
+                .unwrap()
+                .get("test_deployment")
+                .unwrap()
+                .result_type,
+            ComparisonResultType::Match
+        );
+
         PersistedState::delete_cache(path);
+    }
+
+    #[tokio::test]
+    async fn handle_comparison_result_new_deployment() {
+        let notifier = Notifier::new("not-a-real-radio".to_string(), None, None, None, None, None);
+        let local_attestations = Arc::new(SyncMutex::new(HashMap::new()));
+        let remote_messages = Arc::new(SyncMutex::new(Vec::new()));
+        let comparison_results = Arc::new(SyncMutex::new(HashMap::new()));
+        let state = PersistedState {
+            local_attestations,
+            remote_messages,
+            comparison_results,
+        };
+
+        let new_result = ComparisonResult {
+            deployment: String::from("new_deployment"),
+            block_number: 1,
+            result_type: ComparisonResultType::Match,
+            local_attestation: None,
+            attestations: Vec::new(),
+        };
+
+        state.handle_comparison_result(new_result, notifier).await;
+
+        let comparison_results = state.comparison_results.lock().unwrap();
+        assert!(comparison_results.contains_key(&String::from("new_deployment")));
+    }
+
+    #[tokio::test]
+    async fn handle_comparison_result_change_result_type() {
+        let notifier = Notifier::new("not-a-real-radio".to_string(), None, None, None, None, None);
+        let local_attestations = Arc::new(SyncMutex::new(HashMap::new()));
+        let remote_messages = Arc::new(SyncMutex::new(Vec::new()));
+        let comparison_results = Arc::new(SyncMutex::new(HashMap::new()));
+        let state = PersistedState {
+            local_attestations,
+            remote_messages,
+            comparison_results,
+        };
+
+        let old_result = ComparisonResult {
+            deployment: String::from("existing_deployment"),
+            block_number: 1,
+            result_type: ComparisonResultType::Match,
+            local_attestation: None,
+            attestations: Vec::new(),
+        };
+
+        let new_result = ComparisonResult {
+            deployment: String::from("existing_deployment"),
+            block_number: 1,
+            result_type: ComparisonResultType::Divergent,
+            local_attestation: None,
+            attestations: Vec::new(),
+        };
+
+        state
+            .comparison_results
+            .lock()
+            .unwrap()
+            .insert(String::from("existing_deployment"), old_result.clone());
+        state.handle_comparison_result(new_result, notifier).await;
+
+        let comparison_results = state.comparison_results.lock().unwrap();
+        let result = comparison_results
+            .get(&String::from("existing_deployment"))
+            .unwrap();
+        assert_eq!(result.result_type, ComparisonResultType::Divergent);
     }
 }

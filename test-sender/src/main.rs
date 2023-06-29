@@ -12,29 +12,11 @@ use graphcast_sdk::{
     networks::NetworkName,
 };
 use poi_radio::RadioPayloadMessage;
-use rand::RngCore;
-use ring::digest;
 use test_utils::{config::TestSenderConfig, dummy_msg::DummyMsg, find_random_udp_port};
 use tracing::{error, info};
 use waku::{
     waku_new, GossipSubParams, ProtocolId, WakuContentTopic, WakuNodeConfig, WakuPubSubTopic,
 };
-
-fn generate_random_poi() -> String {
-    let mut rng = rand::thread_rng();
-    let mut input = [0u8; 32]; // 32 bytes for SHA-256
-
-    rng.fill_bytes(&mut input);
-
-    let hash = digest::digest(&digest::SHA256, &input);
-
-    let mut hash_string = String::from("0x");
-    for byte in hash.as_ref() {
-        hash_string.push_str(&format!("{:02x}", byte));
-    }
-
-    hash_string
-}
 
 async fn start_sender(config: TestSenderConfig) {
     std::env::set_var(
@@ -103,7 +85,7 @@ async fn start_sender(config: TestSenderConfig) {
             match radio_payload_clone.as_deref() {
                 Some("radio_payload_message") => {
                     let radio_payload =
-                        RadioPayloadMessage::new(topic.clone(), generate_random_poi());
+                        RadioPayloadMessage::new(topic.clone(), config.poi.clone().unwrap());
 
                     let mut graphcast_message = GraphcastMessage::build(
                         &wallet,

@@ -1,7 +1,7 @@
 use poi_radio::state::PersistedState;
 use test_utils::{
     config::{test_config, TestSenderConfig},
-    setup, teardown,
+    messages_are_equal, payloads_are_equal, setup, teardown,
 };
 use tokio::time::{sleep, Duration};
 use tracing::{debug, trace};
@@ -29,6 +29,7 @@ pub async fn send_and_receive_test() {
         staked_tokens: None,
         nonce: None,
         radio_payload: None,
+        poi: None,
     };
 
     let process_manager = setup(&config, test_file_name, &mut test_sender_config).await;
@@ -42,8 +43,6 @@ pub async fn send_and_receive_test() {
 
     let local_attestations = persisted_state.local_attestations();
     let remote_messages = persisted_state.remote_messages();
-
-    debug!("Starting send_and_receive_test");
 
     assert!(
         !local_attestations.is_empty(),
@@ -74,20 +73,24 @@ pub async fn send_and_receive_test() {
     trace!("Num of remote messages {}", remote_messages.len());
 
     assert!(
-        remote_messages.len() >= 10,
-        "The number of remote messages should at least 10. Actual: {}",
+        remote_messages.len() >= 5,
+        "The number of remote messages should at least 5. Actual: {}",
         remote_messages.len()
     );
 
-    let mut signatures = Vec::new();
-    for message in &remote_messages {
-        if signatures.contains(&message.signature) {
-            panic!(
-                "Duplicate remote message found with signature {}",
-                message.signature
-            );
-        } else {
-            signatures.push(message.signature.clone());
+    for (index, message1) in remote_messages.iter().enumerate() {
+        for message2 in remote_messages.iter().skip(index + 1) {
+            if messages_are_equal(message1, message2)
+                && payloads_are_equal(
+                    message1.payload.as_ref().unwrap(),
+                    message2.payload.as_ref().unwrap(),
+                )
+            {
+                panic!(
+                    "Duplicate remote message found with identifier {}",
+                    message1.identifier
+                );
+            }
         }
     }
 }

@@ -18,6 +18,8 @@ pub struct TestSenderConfig {
     pub nonce: Option<String>,
     #[clap(long, value_name = "RADIO_PAYLOAD")]
     pub radio_payload: Option<String>,
+    #[clap(long, value_name = "POI")]
+    pub poi: Option<String>,
 }
 
 pub fn test_config() -> Config {

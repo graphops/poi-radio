@@ -1,5 +1,4 @@
 use derive_getters::Getters;
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex as SyncMutex};
 use std::thread;
@@ -207,8 +206,6 @@ impl RadioOperator {
             skip_iteration_clone.store(true, Ordering::SeqCst);
         });
 
-        let mut divergent_subgraphs: HashSet<String> = HashSet::new();
-
         // Initialize Http server with graceful shutdown if configured
         if self.config.server_port().is_some() {
             let state_ref = &self.persisted_state;
@@ -345,8 +342,8 @@ impl RadioOperator {
                             blocks_str,
                             identifiers.len(),
                             comparison_res,
-                            &mut divergent_subgraphs,
-                            self.notifier.clone()
+                            self.notifier.clone(),
+                            self.persisted_state.clone()
                         )
                     }).await;
 

@@ -5,7 +5,7 @@ use num_traits::Zero;
 use serde_derive::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt::{self, Display},
     sync::{Arc, Mutex as SyncMutex},
 };
@@ -20,6 +20,7 @@ use crate::{
     metrics::{
         ACTIVE_INDEXERS, DIVERGING_SUBGRAPHS, INDEXER_COUNT_BY_NPOI, LOCAL_NPOIS_TO_COMPARE,
     },
+    state::PersistedState,
     OperationError, RadioPayloadMessage,
 };
 
@@ -293,7 +294,7 @@ pub enum ComparisonResultType {
 
 /// Keep track of the attestation result for a deployment and block
 /// Can add block_hash and network fields for tracking if needed
-#[derive(Debug, PartialEq, Eq, Hash, SimpleObject)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, SimpleObject)]
 pub struct ComparisonResult {
     pub deployment: String,
     pub block_number: u64,
@@ -613,23 +614,13 @@ pub async fn log_gossip_summary(
     );
 }
 
-fn update_divergent_subgraphs(
-    divergent_subgraphs: &mut HashSet<String>,
-    comparison_result: &ComparisonResult,
-) {
-    if divergent_subgraphs.contains(&comparison_result.deployment) {
-        divergent_subgraphs.remove(&comparison_result.deployment);
-    }
-}
-
 /// This function logs the operational summary of the main event loop
-#[allow(clippy::too_many_arguments)]
 pub async fn process_comparison_results(
     blocks_str: String,
     num_topics: usize,
     result_strings: Vec<Result<ComparisonResult, OperationError>>,
-    divergent_subgraphs: &mut HashSet<String>,
     notifier: Notifier,
+    persisted_state: PersistedState,
 ) {
     // Generate attestation summary
     let mut match_strings = vec![];
@@ -641,26 +632,25 @@ pub async fn process_comparison_results(
 
     for result in result_strings {
         match result {
-            Ok(x) if x.result_type == ComparisonResultType::Match => {
-                update_divergent_subgraphs(divergent_subgraphs, &x);
-                match_strings.push(x.to_string());
-            }
-            Ok(x) if x.result_type == ComparisonResultType::NotFound => {
-                not_found_strings.push(x.to_string());
-            }
-            Ok(x) if x.result_type == ComparisonResultType::Divergent => {
-                error!(result = x.to_string(), "Found nPOI divergence!");
-                if divergent_subgraphs.contains(&x.deployment) {
-                    trace!("Known divergence, skipping notifications.");
-                } else {
-                    notifier.clone().notify(x.to_string()).await;
-                    divergent_subgraphs.insert(x.deployment.clone());
+            Ok(comparison_result) => {
+                let result_type = persisted_state
+                    .handle_comparison_result(comparison_result.clone(), notifier.clone())
+                    .await;
+
+                match result_type {
+                    ComparisonResultType::Match => {
+                        match_strings.push(comparison_result.to_string());
+                    }
+                    ComparisonResultType::NotFound => {
+                        not_found_strings.push(comparison_result.to_string());
+                    }
+                    ComparisonResultType::Divergent => {
+                        divergent_strings.push(comparison_result.to_string());
+                    }
+                    _ => attestation_failed.push(comparison_result.to_string()),
                 }
-                divergent_strings.push(x.to_string());
             }
-            Ok(x) => attestation_failed.push(x.to_string()),
             Err(OperationError::CompareTrigger(_, _, e)) => cmp_trigger_failed.push(e.to_string()),
-            // Share with the compareResult::BuildFailed
             Err(OperationError::Attestation(e)) => attestation_failed.push(e.to_string()),
             Err(e) => cmp_errors.push(e.to_string()),
         }
@@ -1106,23 +1096,5 @@ mod tests {
                 .npoi
                 == *"npoi-x"
         );
-    }
-
-    #[test]
-    fn test_update_divergent_subgraphs() {
-        let mut divergent_subgraphs = HashSet::new();
-        let comparison_result = ComparisonResult {
-            deployment: String::from("deployment1"),
-            block_number: 1,
-            result_type: ComparisonResultType::Match,
-            local_attestation: None,
-            attestations: vec![],
-        };
-
-        divergent_subgraphs.insert(comparison_result.deployment.clone());
-
-        update_divergent_subgraphs(&mut divergent_subgraphs, &comparison_result);
-
-        assert!(!divergent_subgraphs.contains(&comparison_result.deployment));
     }
 }

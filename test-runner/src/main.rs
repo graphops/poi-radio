@@ -5,7 +5,8 @@ use graphcast_sdk::init_tracing;
 use test_runner::{
     invalid_block_hash::invalid_block_hash_test, invalid_nonce::invalid_nonce_test,
     invalid_payload::invalid_payload_test, invalid_sender::invalid_sender_test,
-    message_handling::send_and_receive_test, topics::topics_test,
+    message_handling::send_and_receive_test, poi_divergent::poi_divergent_test,
+    poi_match::poi_match_test, topics::topics_test,
 };
 use test_utils::config::test_config;
 use tracing::{error, info};
@@ -32,7 +33,6 @@ async fn run_tests(
 
     (tests_passed, test_results)
 }
-
 #[tokio::main]
 pub async fn main() {
     let config = test_config();
@@ -45,62 +45,89 @@ pub async fn main() {
 
     let start_time = Instant::now();
 
-    let mut initial_tests = vec![
-        (
-            "send_and_receive_test",
-            tokio::spawn(send_and_receive_test()),
-        ),
-        ("topics_test", tokio::spawn(topics_test())),
-    ];
-
     let mut retry_count = 3;
-    let mut initial_test_results: Option<HashMap<String, bool>> = None;
+    let mut initial_test_results: HashMap<String, bool> = HashMap::new();
     let mut initial_tests_passed = false;
 
     while retry_count > 0 && !initial_tests_passed {
-        let (tests_passed, test_results) = run_tests(initial_tests).await;
-        if tests_passed {
-            initial_tests_passed = true;
-        } else {
-            retry_count -= 1;
-        }
-        initial_test_results = Some(test_results);
-
-        // Reinitialize for possible next loop iteration
-        initial_tests = vec![
+        let initial_tests = vec![
             (
                 "send_and_receive_test",
                 tokio::spawn(send_and_receive_test()),
             ),
             ("topics_test", tokio::spawn(topics_test())),
         ];
-    }
 
-    let mut remaining_tests_passed = false;
-    let mut remaining_test_results = HashMap::new();
+        let (tests_passed, test_results) = run_tests(initial_tests).await;
+        initial_test_results = test_results;
+
+        if tests_passed {
+            initial_tests_passed = true;
+        } else {
+            retry_count -= 1;
+        }
+    }
 
     if initial_tests_passed {
-        let remaining_tests = vec![
-            (
-                "invalid_block_hash_test",
-                tokio::spawn(invalid_block_hash_test()),
-            ),
-            ("invalid_sender_test", tokio::spawn(invalid_sender_test())),
-            ("invalid_nonce_test", tokio::spawn(invalid_nonce_test())),
-            ("invalid_payload_test", tokio::spawn(invalid_payload_test())),
+        let poi_tests = vec![
+            ("poi_divergent_test", tokio::spawn(poi_divergent_test())),
+            ("poi_match_test", tokio::spawn(poi_match_test())),
         ];
 
-        let (tests_passed, test_results) = run_tests(remaining_tests).await;
-        remaining_tests_passed = tests_passed;
-        remaining_test_results = test_results;
-    }
+        let (poi_tests_passed, poi_test_results) = run_tests(poi_tests).await;
+        if poi_tests_passed {
+            let remaining_tests = vec![
+                (
+                    "invalid_block_hash_test",
+                    tokio::spawn(invalid_block_hash_test()),
+                ),
+                ("invalid_sender_test", tokio::spawn(invalid_sender_test())),
+                ("invalid_nonce_test", tokio::spawn(invalid_nonce_test())),
+                ("invalid_payload_test", tokio::spawn(invalid_payload_test())),
+            ];
 
+            let (remaining_tests_passed, remaining_test_results) = run_tests(remaining_tests).await;
+
+            print_test_summary(
+                initial_test_results,
+                poi_test_results,
+                remaining_test_results,
+                remaining_tests_passed,
+                start_time,
+            );
+        } else {
+            print_test_summary(
+                initial_test_results,
+                poi_test_results,
+                HashMap::new(),
+                false,
+                start_time,
+            );
+        }
+    } else {
+        print_test_summary(
+            initial_test_results,
+            HashMap::new(),
+            HashMap::new(),
+            false,
+            start_time,
+        );
+    }
+}
+
+fn print_test_summary(
+    initial_test_results: HashMap<String, bool>,
+    poi_test_results: HashMap<String, bool>,
+    remaining_test_results: HashMap<String, bool>,
+    remaining_tests_passed: bool,
+    start_time: Instant,
+) {
     let elapsed_time = start_time.elapsed();
     // Print summary of tests
     println!("\nTest Summary:\n");
     for (test_name, passed) in initial_test_results
-        .unwrap()
         .iter()
+        .chain(&poi_test_results)
         .chain(&remaining_test_results)
     {
         if *passed {
@@ -110,7 +137,7 @@ pub async fn main() {
         }
     }
 
-    if initial_tests_passed && remaining_tests_passed {
+    if remaining_tests_passed {
         info!(
             "All tests passed ✅. Time elapsed: {}s",
             elapsed_time.as_secs()

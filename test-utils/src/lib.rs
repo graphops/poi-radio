@@ -10,9 +10,14 @@ use std::{
 
 use chrono::Utc;
 use config::TestSenderConfig;
+use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
 use graphcast_sdk::graphcast_agent::message_typing::IdentityValidation;
 use mock_server::{start_mock_server, ServerState};
-use poi_radio::config::{Config, CoverageLevel};
+use poi_radio::{
+    config::{Config, CoverageLevel},
+    RadioPayloadMessage,
+};
+use prost::Message;
 use rand::Rng;
 use tracing::info;
 
@@ -104,6 +109,10 @@ pub async fn setup(
                     .clone()
                     .unwrap_or("radio_payload_message".to_string()),
             )
+            .arg("--poi")
+            .arg(&test_sender_config.poi.clone().unwrap_or(
+                "0x25331f98b82ca7f3966256bf508a7ede52e715b631dfa3d73b846bb7617f6b9e".to_string(),
+            ))
             .spawn()
             .expect("Failed to start command"),
     ));
@@ -251,4 +260,25 @@ pub fn find_random_udp_port() -> u16 {
     }
 
     port
+}
+
+pub fn messages_are_equal<T>(msg1: &GraphcastMessage<T>, msg2: &GraphcastMessage<T>) -> bool
+where
+    T: Message
+        + ethers::types::transaction::eip712::Eip712
+        + Default
+        + Clone
+        + 'static
+        + async_graphql::OutputType,
+{
+    msg1.identifier == msg2.identifier
+        && msg1.nonce == msg2.nonce
+        && msg1.network == msg2.network
+        && msg1.block_number == msg2.block_number
+        && msg1.block_hash == msg2.block_hash
+        && msg1.signature == msg2.signature
+}
+
+pub fn payloads_are_equal(payload1: &RadioPayloadMessage, payload2: &RadioPayloadMessage) -> bool {
+    payload1.identifier == payload2.identifier && payload1.content == payload2.content
 }
