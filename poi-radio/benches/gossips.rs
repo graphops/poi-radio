@@ -28,7 +28,9 @@ fn gossip_poi_bench(c: &mut Criterion) {
         registry_subgraph: String::from(
             "https://api.thegraph.com/subgraphs/name/hopeyen/graphcast-registry-goerli",
         ),
-        network_subgraph: String::from("https://gateway.testnet.thegraph.com/network"),
+        network_subgraph: String::from(
+            "https://api.thegraph.com/subgraphs/name/graphprotocol/graph-network-goerli",
+        ),
         graphcast_network: String::from("testnet"),
         topics: vec![String::from(
             "QmbaLc7fEfLGUioKWehRhq838rRzeR8cBoapNJWNSAZE8u",

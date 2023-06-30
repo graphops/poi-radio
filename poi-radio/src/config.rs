@@ -82,7 +82,7 @@ pub struct Config {
         value_name = "SUBGRAPH",
         env = "NETWORK_SUBGRAPH",
         help = "Subgraph endpoint to The Graph network subgraph",
-        default_value = "https://gateway.testnet.thegraph.com/network"
+        default_value = "https://api.thegraph.com/subgraphs/name/graphprotocol/graph-network-goerli"
     )]
     pub network_subgraph: String,
     #[clap(
@@ -91,7 +91,7 @@ pub struct Config {
         value_name = "NAME",
         env = "GRAPHCAST_NETWORK",
         help = "Supported Graphcast networks: mainnet, testnet",
-        possible_values = ["testnet", "mainnet"]
+        possible_values = ["testnet", "mainnet"],
     )]
     pub graphcast_network: String,
     #[clap(
