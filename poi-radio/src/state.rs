@@ -95,6 +95,15 @@ impl PersistedState {
         self.comparison_results.lock().unwrap().clone()
     }
 
+    /// Getter for comparison result
+    pub fn comparison_result(&self, deployment: String) -> Option<ComparisonResult> {
+        self.comparison_results
+            .lock()
+            .unwrap()
+            .get(&deployment)
+            .cloned()
+    }
+
     /// Update local_attestations
     pub async fn update_local(&mut self, local_attestations: Local) {
         self.local_attestations = local_attestations;

@@ -52,6 +52,8 @@ pub struct Config {
         hide_env_values = true,
         help = "Private key to the Graphcast ID wallet (Precendence over mnemonics)",
     )]
+    // should keep this value private, this is current public due to the constructing a Config in test-utils
+    // We can get around this by making an explicit function to make config instead of direct build in {}
     pub private_key: Option<String>,
     #[clap(
         long,

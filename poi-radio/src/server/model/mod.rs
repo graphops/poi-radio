@@ -1,6 +1,4 @@
-use async_graphql::{
-    Context, EmptyMutation, EmptySubscription, InputObject, Object, Schema, SimpleObject,
-};
+use async_graphql::{Context, EmptyMutation, EmptySubscription, Object, Schema, SimpleObject};
 use chrono::Utc;
 
 use std::{collections::HashMap, sync::Arc};
@@ -34,13 +32,8 @@ impl QueryRoot {
     ) -> Result<Vec<GraphcastMessage<RadioPayloadMessage>>, HttpServiceError> {
         let msgs = ctx
             .data_unchecked::<Arc<POIRadioContext>>()
-            .remote_messages();
-        let filtered = msgs
-            .iter()
-            .cloned()
-            .filter(|message| filter_remote_messages(message, &identifier, &block))
-            .collect::<Vec<_>>();
-        Ok(filtered)
+            .remote_messages_filtered(&identifier, &block);
+        Ok(msgs)
     }
 
     async fn local_attestations(
@@ -57,55 +50,32 @@ impl QueryRoot {
         Ok(filtered)
     }
 
-    // TODO: Reproduce tabular summary view. use process_message and compare_attestations
+    /// Function that optionally takes in identifier and block filters.
     async fn comparison_results(
         &self,
         ctx: &Context<'_>,
-        deployment: Option<String>,
+        identifier: Option<String>,
         block: Option<u64>,
-        _filter: Option<ResultFilter>,
+        result_type: Option<ComparisonResultType>,
     ) -> Result<Vec<ComparisonResult>, HttpServiceError> {
-        // Utilize the provided filters on local_attestations
-        let locals = attestations_to_vec(
-            &ctx.data_unchecked::<Arc<POIRadioContext>>()
-                .local_attestations(deployment.clone(), block),
-        );
+        let res = &ctx
+            .data_unchecked::<Arc<POIRadioContext>>()
+            .comparison_results(identifier, block, result_type)
+            .await;
 
-        let config = ctx.data_unchecked::<Arc<POIRadioContext>>().radio_config();
-        let network_subgraph = config.network_subgraph.clone();
+        Ok(res.to_vec())
+    }
 
-        let mut res = vec![];
-        for entry in locals {
-            let deployment_identifier = entry.deployment.clone();
-            let msgs = self
-                .radio_payload_messages(
-                    ctx,
-                    Some(deployment_identifier.clone()),
-                    Some(entry.block_number),
-                )
-                .await?;
-            let remote_attestations = match process_messages(msgs, &network_subgraph).await {
-                Ok(r) => {
-                    if let Some(deployment_attestations) = r.get(&deployment_identifier.clone()) {
-                        if let Some(deployment_block_attestations) =
-                            deployment_attestations.get(&entry.block_number)
-                        {
-                            deployment_block_attestations.clone()
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                }
-                Err(_e) => continue,
-            };
-
-            let r = compare_attestation(entry, remote_attestations);
-            res.push(r);
-        }
-
-        Ok(res)
+    /// Function to grab the latest relevant comparison result of a deployment
+    async fn comparison_result(
+        &self,
+        ctx: &Context<'_>,
+        identifier: String,
+    ) -> Result<Option<ComparisonResult>, HttpServiceError> {
+        let res = &ctx
+            .data_unchecked::<Arc<POIRadioContext>>()
+            .comparison_result(identifier);
+        Ok(res.clone())
     }
 
     /// Return the sender ratio for remote attestations, with a "!" for the attestation matching local
@@ -114,15 +84,16 @@ impl QueryRoot {
         ctx: &Context<'_>,
         deployment: Option<String>,
         block: Option<u64>,
-        filter: Option<ResultFilter>,
+        result_type: Option<ComparisonResultType>,
     ) -> Result<Vec<CompareRatio>, HttpServiceError> {
         let res = self
-            .comparison_results(ctx, deployment, block, filter)
+            .comparison_results(ctx, deployment, block, result_type)
             .await?;
         let local_info = self.indexer_info(ctx).await?;
 
         let mut ratios = vec![];
         for r in res {
+            // Double check for local attestations to ensure there will be no divide by 0 during the ratio
             let local_attestation = if let Some(local_attestation) = r.local_attestation {
                 local_attestation
             } else {
@@ -130,6 +101,7 @@ impl QueryRoot {
             };
             let local_npoi = local_attestation.npoi.clone();
 
+            // Aggregate remote attestations with the local attestations
             let mut aggregated_attestations: Vec<Attestation> = vec![];
             for a in r.attestations {
                 if a.npoi == local_attestation.npoi {
@@ -270,6 +242,75 @@ impl POIRadioContext {
         self.persisted_state.remote_messages()
     }
 
+    pub fn remote_messages_filtered(
+        &self,
+        identifier: &Option<String>,
+        block: &Option<u64>,
+    ) -> Vec<GraphcastMessage<RadioPayloadMessage>> {
+        let msgs = self.remote_messages();
+        let filtered = msgs
+            .iter()
+            .cloned()
+            .filter(|message| filter_remote_messages(message, identifier, block))
+            .collect::<Vec<_>>();
+        filtered
+    }
+
+    pub fn comparison_result(&self, identifier: String) -> Option<ComparisonResult> {
+        let cmp_results = self.persisted_state.comparison_results();
+        cmp_results.get(&identifier).cloned()
+    }
+
+    pub async fn comparison_results(
+        &self,
+        identifier: Option<String>,
+        block: Option<u64>,
+        result_type: Option<ComparisonResultType>,
+    ) -> Vec<ComparisonResult> {
+        // Simply take from persisted state if block is not specified
+        if block.is_none() {
+            let cmp_results = self.persisted_state.comparison_results();
+
+            cmp_results
+                .iter()
+                .filter(|&(deployment, cmp_res)| {
+                    (identifier.is_none() | (Some(deployment.clone()) == identifier))
+                        && (result_type.is_none() | (Some(cmp_res.result_type) == result_type))
+                })
+                .map(|(_, cmp_res)| cmp_res.clone())
+                .collect::<Vec<ComparisonResult>>()
+        } else {
+            // Calculate for the block if specified
+            let locals = attestations_to_vec(&self.local_attestations(identifier.clone(), block));
+
+            let config = self.radio_config();
+            let network_subgraph = config.network_subgraph.clone();
+
+            let mut res = vec![];
+            for entry in locals {
+                let deployment_identifier = entry.deployment.clone();
+                let msgs = self.remote_messages_filtered(&identifier, &block);
+                let remote_attestations = process_messages(msgs, &network_subgraph)
+                    .await
+                    .ok()
+                    .and_then(|r| {
+                        r.get(&deployment_identifier)
+                            .and_then(|deployment_attestations| {
+                                deployment_attestations.get(&entry.block_number).cloned()
+                            })
+                    })
+                    .unwrap_or_default();
+
+                let r = compare_attestation(entry, remote_attestations);
+                if result_type.is_none() | (result_type.unwrap() == r.result_type) {
+                    res.push(r);
+                }
+            }
+
+            res
+        }
+    }
+
     pub fn radio_config(&self) -> Config {
         self.radio_config.clone()
     }
@@ -290,13 +331,6 @@ fn filter_remote_messages(
         None => true, // Skip check
     };
     is_matching_identifier && is_matching_block
-}
-
-#[derive(InputObject)]
-struct ResultFilter {
-    deployment: Option<String>,
-    block_number: Option<u64>,
-    result_type: Option<ComparisonResultType>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, SimpleObject)]
