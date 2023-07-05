@@ -123,7 +123,7 @@ pub async fn message_send(
 
     let block_hash = match graphcast_agent
         .callbook
-        .block_hash(network_name.to_string(), message_block)
+        .block_hash(&network_name.to_string(), message_block)
         .await
     {
         Ok(hash) => hash,
@@ -145,7 +145,7 @@ pub async fn message_send(
         Ok(content) => {
             let radio_message = RadioPayloadMessage::new(id.clone(), content.clone());
             match graphcast_agent
-                .send_message(id.clone(), network_name, message_block, Some(radio_message))
+                .send_message(&id, network_name, message_block, Some(radio_message))
                 .await
             {
                 Ok(msg_id) => {
@@ -320,7 +320,7 @@ impl RadioOperator {
         let block_hash = match self
             .config
             .callbook()
-            .block_hash(network_name.to_string(), message_block)
+            .block_hash(&network_name.to_string(), message_block)
             .await
         {
             Ok(hash) => hash,

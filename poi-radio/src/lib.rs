@@ -76,7 +76,7 @@ pub async fn active_allocation_hashes(
     network_subgraph: &str,
     indexer_address: String,
 ) -> Vec<String> {
-    query_network_subgraph(network_subgraph.to_string(), indexer_address)
+    query_network_subgraph(network_subgraph, &indexer_address)
         .await
         .map(|result| result.indexer_allocations())
         .unwrap_or_else(|e| {
@@ -91,7 +91,7 @@ pub async fn syncing_deployment_hashes(
     graph_node_endpoint: &str,
     // graphQL filter
 ) -> Vec<String> {
-    get_indexing_statuses(graph_node_endpoint.to_string())
+    get_indexing_statuses(graph_node_endpoint)
         .await
         .map_err(|e| -> Vec<String> {
             error!(err = tracing::field::debug(&e), "Topic generation error");

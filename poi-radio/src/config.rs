@@ -372,13 +372,11 @@ impl Config {
         .map_err(|e| QueryError::Other(e.into()))?;
         // The query here must be Ok but so it is okay to panic here
         // Alternatively, make validate_set_up return wallet, address, and stake
-        let my_address =
-            query_registry(self.registry_subgraph.to_string(), wallet_address(&wallet)).await?;
-        let my_stake =
-            query_network_subgraph(self.network_subgraph.to_string(), my_address.clone())
-                .await
-                .unwrap()
-                .indexer_stake();
+        let my_address = query_registry(&self.registry_subgraph, &wallet_address(&wallet)).await?;
+        let my_stake = query_network_subgraph(&self.network_subgraph, &my_address)
+            .await
+            .unwrap()
+            .indexer_stake();
         info!(
             my_address,
             my_stake, "Initializing radio operator for indexer identity",

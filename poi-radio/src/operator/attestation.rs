@@ -124,7 +124,7 @@ pub async fn process_messages(
     for msg in messages.iter() {
         let radio_msg = &msg.payload.clone().unwrap();
         let npoi = radio_msg.payload_content().to_string();
-        let sender_stake = get_indexer_stake(msg.graph_account.clone(), network_subgraph)
+        let sender_stake = get_indexer_stake(&msg.graph_account, network_subgraph)
             .await
             .map_err(|e| AttestationError::BuildError(BuildMessageError::FieldDerivations(e)))?;
 
