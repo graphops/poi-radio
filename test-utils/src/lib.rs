@@ -273,12 +273,13 @@ where
 {
     msg1.identifier == msg2.identifier
         && msg1.nonce == msg2.nonce
-        && msg1.network == msg2.network
-        && msg1.block_number == msg2.block_number
-        && msg1.block_hash == msg2.block_hash
         && msg1.signature == msg2.signature
 }
 
 pub fn payloads_are_equal(payload1: &RadioPayloadMessage, payload2: &RadioPayloadMessage) -> bool {
-    payload1.identifier == payload2.identifier && payload1.content == payload2.content
+    payload1.identifier == payload2.identifier
+        && payload1.content == payload2.content
+        && payload1.network == payload2.network
+        && payload1.block_number == payload2.block_number
+        && payload1.block_hash == payload2.block_hash
 }

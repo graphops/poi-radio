@@ -84,17 +84,20 @@ async fn start_sender(config: TestSenderConfig) {
             let radio_payload_clone = config.radio_payload.clone();
             match radio_payload_clone.as_deref() {
                 Some("radio_payload_message") => {
-                    let radio_payload =
-                        RadioPayloadMessage::new(topic.clone(), config.poi.clone().unwrap());
-
-                    let mut graphcast_message = GraphcastMessage::build(
-                        &wallet,
+                    let radio_payload = RadioPayloadMessage::build(
                         topic.clone(),
-                        Some(radio_payload),
+                        config.poi.clone().unwrap(),
                         NetworkName::Goerli,
                         timestamp.try_into().unwrap(),
                         config.block_hash.clone().unwrap(),
                         "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
+                    );
+
+                    let mut graphcast_message = GraphcastMessage::build(
+                        &wallet,
+                        topic.clone(),
+                        "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
+                        radio_payload,
                     )
                     .await
                     .unwrap();
@@ -119,11 +122,8 @@ async fn start_sender(config: TestSenderConfig) {
                     let graphcast_message = GraphcastMessage::build(
                         &wallet,
                         topic.clone(),
-                        Some(payload),
-                        NetworkName::Goerli,
-                        timestamp.try_into().unwrap(),
-                        config.block_hash.clone().unwrap(),
                         "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
+                        payload,
                     )
                     .await
                     .unwrap();

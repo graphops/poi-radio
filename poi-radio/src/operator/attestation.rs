@@ -12,8 +12,9 @@ use std::{
 
 use tracing::{debug, error, info, trace, warn};
 
-use graphcast_sdk::graphcast_agent::message_typing::{
-    get_indexer_stake, BuildMessageError, GraphcastMessage,
+use graphcast_sdk::{
+    callbook::CallBook,
+    graphcast_agent::message_typing::{get_indexer_stake, BuildMessageError, GraphcastMessage},
 };
 
 use crate::{
@@ -109,10 +110,9 @@ pub fn attestations_to_vec(attestations: &LocalAttestationsMap) -> Vec<Attestati
 #[autometrics]
 pub async fn process_messages(
     messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
-    network_subgraph: &str,
+    callbook: &CallBook,
 ) -> Result<RemoteAttestationsMap, AttestationError> {
     let mut remote_attestations: RemoteAttestationsMap = HashMap::new();
-
     // Check if there are existing attestations for the block
     let first_message = messages.first();
     let first_msg = if first_message.is_none() {
@@ -122,17 +122,21 @@ pub async fn process_messages(
     };
 
     for msg in messages.iter() {
-        let radio_msg = &msg.payload.clone().unwrap();
+        let radio_msg = &msg.payload.clone();
+        // Message has passed GraphcastMessage validation, now check for radio validation
         let npoi = radio_msg.payload_content().to_string();
-        let sender_stake = get_indexer_stake(&msg.graph_account, network_subgraph)
-            .await
-            .map_err(|e| AttestationError::BuildError(BuildMessageError::FieldDerivations(e)))?;
+        let sender_stake =
+            get_indexer_stake(&radio_msg.graph_account.clone(), callbook.graph_network())
+                .await
+                .map_err(|e| {
+                    AttestationError::BuildError(BuildMessageError::FieldDerivations(e))
+                })?;
 
         //TODO: update this to utilize update_blocks?
         let blocks = remote_attestations
             .entry(msg.identifier.to_string())
             .or_default();
-        let attestations = blocks.entry(msg.block_number).or_default();
+        let attestations = blocks.entry(radio_msg.block_number).or_default();
 
         let existing_attestation = attestations.iter_mut().find(|a| a.npoi == npoi);
 
@@ -170,14 +174,14 @@ pub async fn process_messages(
     let blocks = remote_attestations
         .entry(first_msg.identifier.to_string())
         .or_default();
-    for a in blocks.entry(first_msg.block_number).or_default() {
+    for a in blocks.entry(first_msg.payload.block_number).or_default() {
         // this can probably sum up to active peers)
         // Update INDEXER_COUNT_BY_NPOI metric
         npoi_hist.observe(a.senders.len() as f64);
     }
 
     let active_indexers = ACTIVE_INDEXERS.with_label_values(&[&first_msg.identifier.to_string()]);
-    let senders = combine_senders(blocks.entry(first_msg.block_number).or_default());
+    let senders = combine_senders(blocks.entry(first_msg.payload.block_number).or_default());
     active_indexers.set(senders.len().try_into().unwrap());
 
     Ok(remote_attestations)

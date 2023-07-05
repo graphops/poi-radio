@@ -23,7 +23,7 @@ categories = [
 [dependencies]
 waku = { version = "0.1.1", package = "waku-bindings" }
 test-utils = { path = "../test-utils" }
-graphcast-sdk = { git = "https://github.com/graphops/graphcast-sdk" }
+graphcast-sdk = { package = "graphcast-sdk", git = "https://github.com/graphops/graphcast-sdk", branch = "hope/msg-restructure" }
 poi-radio = { path = "../poi-radio" }
 tokio = { version = "1.1.1", features = ["full", "rt"] }
 tracing = "0.1"

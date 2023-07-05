@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use autometrics::autometrics;
 use clap::Parser;
 use derive_getters::Getters;
@@ -17,6 +15,7 @@ use graphcast_sdk::{
     init_tracing, wallet_address,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use tracing::{debug, info, trace};
 
 use crate::state::PersistedState;
@@ -374,8 +373,8 @@ impl Config {
         .map_err(|e| QueryError::Other(e.into()))?;
         // The query here must be Ok but so it is okay to panic here
         // Alternatively, make validate_set_up return wallet, address, and stake
-        let my_address = query_registry(&self.registry_subgraph, &wallet_address(&wallet)).await?;
-        let my_stake = query_network_subgraph(&self.network_subgraph, &my_address)
+        let my_address = query_registry(self.registry_subgraph(), &wallet_address(&wallet)).await?;
+        let my_stake = query_network_subgraph(self.network_subgraph(), &my_address)
             .await
             .unwrap()
             .indexer_stake();
@@ -424,24 +423,20 @@ impl Config {
         let topics = match self.coverage {
             CoverageLevel::Minimal => static_topics,
             CoverageLevel::OnChain => {
-                let mut topics: HashSet<String> = active_allocation_hashes(
-                    self.callbook().graph_network(),
-                    indexer_address.clone(),
-                )
-                .await
-                .into_iter()
-                .collect();
+                let mut topics: HashSet<String> =
+                    active_allocation_hashes(self.callbook().graph_network(), &indexer_address)
+                        .await
+                        .into_iter()
+                        .collect();
                 topics.extend(static_topics);
                 topics
             }
             CoverageLevel::Comprehensive => {
-                let active_topics: HashSet<String> = active_allocation_hashes(
-                    self.callbook().graph_network(),
-                    indexer_address.clone(),
-                )
-                .await
-                .into_iter()
-                .collect();
+                let active_topics: HashSet<String> =
+                    active_allocation_hashes(self.callbook().graph_network(), &indexer_address)
+                        .await
+                        .into_iter()
+                        .collect();
                 let mut additional_topics: HashSet<String> =
                     syncing_deployment_hashes(self.graph_node_endpoint())
                         .await

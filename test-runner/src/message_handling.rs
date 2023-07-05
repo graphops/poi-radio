@@ -81,10 +81,7 @@ pub async fn send_and_receive_test() {
     for (index, message1) in remote_messages.iter().enumerate() {
         for message2 in remote_messages.iter().skip(index + 1) {
             if messages_are_equal(message1, message2)
-                && payloads_are_equal(
-                    message1.payload.as_ref().unwrap(),
-                    message2.payload.as_ref().unwrap(),
-                )
+                && payloads_are_equal(&message1.payload, &message2.payload)
             {
                 panic!(
                     "Duplicate remote message found with identifier {}",

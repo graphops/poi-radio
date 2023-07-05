@@ -4,7 +4,6 @@ use graphcast_sdk::callbook::CallBook;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex as SyncMutex};
-
 use tracing::{debug, error, trace, warn};
 
 use graphcast_sdk::{
@@ -143,11 +142,19 @@ pub async fn message_send(
         .await
     {
         Ok(content) => {
-            let radio_message = RadioPayloadMessage::new(id.clone(), content.clone());
-            match graphcast_agent
-                .send_message(&id, network_name, message_block, Some(radio_message))
+            let block_hash = callbook
+                .block_hash(&network_name.to_string(), message_block)
                 .await
-            {
+                .map_err(OperationError::Query)?;
+            let radio_message = RadioPayloadMessage::build(
+                id.clone(),
+                content.clone(),
+                network_name,
+                message_block,
+                block_hash,
+                graphcast_agent.graphcast_identity.graph_account.clone(),
+            );
+            match graphcast_agent.send_message(&id, radio_message).await {
                 Ok(msg_id) => {
                     save_local_attestation(
                         local_attestations.clone(),
@@ -155,6 +162,7 @@ pub async fn message_send(
                         id.clone(),
                         message_block,
                     );
+                    trace!("save local attestations: {:#?}", local_attestations);
                     Ok(msg_id)
                 }
                 Err(e) => {
@@ -181,7 +189,7 @@ pub async fn message_send(
 pub async fn message_comparison(
     id: String,
     collect_window_duration: i64,
-    network_subgraph: String,
+    callbook: CallBook,
     messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
     local_attestations: HashMap<String, HashMap<u64, Attestation>>,
 ) -> Result<ComparisonResult, OperationError> {
@@ -212,10 +220,9 @@ pub async fn message_comparison(
         }
     };
 
-    // Update to only process the identifier&compare_block related messages within the collection window
     let filter_msg: Vec<GraphcastMessage<RadioPayloadMessage>> = messages
         .iter()
-        .filter(|&m| m.block_number == compare_block && m.nonce <= collect_window_end)
+        .filter(|&m| m.payload.block_number == compare_block && m.nonce <= collect_window_end)
         .cloned()
         .collect();
     debug!(
@@ -227,7 +234,7 @@ pub async fn message_comparison(
         number_of_messages_matched_to_compare = filter_msg.len(),
         "Comparison state",
     );
-    let remote_attestations_result = process_messages(filter_msg, &network_subgraph).await;
+    let remote_attestations_result = process_messages(filter_msg, &callbook).await;
     let remote_attestations = match remote_attestations_result {
         Ok(remote) => {
             debug!(unique_remote_nPOIs = remote.len(), "Processed messages",);
@@ -236,7 +243,7 @@ pub async fn message_comparison(
         Err(err) => {
             trace!(
                 err = tracing::field::debug(&err),
-                "An error occured while parsing messages",
+                "An error occured while processing the messages",
             );
             return Err(OperationError::Attestation(err));
         }
@@ -258,7 +265,11 @@ impl RadioOperator {
         move |msg: Result<GraphcastMessage<RadioPayloadMessage>, WakuHandlingError>| {
             // TODO: Handle the error case by incrementing a Prometheus "error" counter
             if let Ok(msg) = msg {
-                trace!(msg = tracing::field::debug(&msg), "Received message");
+                trace!(
+                    msg = tracing::field::debug(&msg),
+                    "Received Graphcast validated message"
+                );
+
                 let id = msg.identifier.clone();
                 VALIDATED_MESSAGES.with_label_values(&[&id]).inc();
                 match sender.lock().unwrap().send(msg) {
@@ -279,8 +290,6 @@ impl RadioOperator {
         message_block: u64,
         latest_block: BlockPointer,
         network_name: NetworkName,
-        // local_attestations: Arc<AsyncMutex<HashMap<String, HashMap<u64, Attestation>>>>,
-        // graphcast_agent: &GraphcastAgent,
     ) -> Result<RadioPayloadMessage, OperationError> {
         trace!(
             message_block = message_block,
@@ -341,7 +350,17 @@ impl RadioOperator {
             )
             .await
         {
-            Ok(content) => Ok(RadioPayloadMessage::new(id.clone(), content)),
+            Ok(content) => Ok(RadioPayloadMessage::build(
+                id.clone(),
+                content,
+                network_name,
+                message_block,
+                block_hash,
+                self.graphcast_agent
+                    .graphcast_identity
+                    .graph_account
+                    .clone(),
+            )),
             Err(e) => {
                 error!(
                     err = tracing::field::debug(&e),
@@ -412,12 +431,18 @@ impl RadioOperator {
         identifiers: Vec<String>,
     ) -> Vec<Result<ComparisonResult, OperationError>> {
         let mut compare_handles = vec![];
-        let remote_messages = self.state().remote_messages();
+        // Update to only process the identifier&compare_block related messages within the collection window
+        // Additional radio message check happens here since messages are synchronously stored to state cache in msg handler
+        let remote_messages = self
+            .state()
+            .valid_messages(&self.config.graph_node_endpoint)
+            .await;
+
         for id in identifiers.clone() {
             /* Set up */
             let collect_duration: i64 = self.config.collect_message_duration().to_owned();
             let id_cloned = id.clone();
-            let network_subgraph = self.config.network_subgraph.clone();
+            let callbook = self.config.callbook();
             let local_attestations = self.state().local_attestations();
             let filtered_msg = remote_messages
                 .iter()
@@ -429,7 +454,7 @@ impl RadioOperator {
                 message_comparison(
                     id_cloned,
                     collect_duration,
-                    network_subgraph.clone(),
+                    callbook.clone(),
                     filtered_msg,
                     local_attestations,
                 )

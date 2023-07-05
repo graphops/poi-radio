@@ -7,7 +7,7 @@ use std::{
     fs::{remove_file, File},
     io::{BufReader, Write},
 };
-use tracing::warn;
+use tracing::{trace, warn};
 
 use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
 
@@ -110,12 +110,18 @@ impl PersistedState {
     }
 
     /// Update remote_messages
-    pub async fn update_remote(&mut self, remote_messages: Remote) {
-        self.remote_messages = remote_messages;
+    pub async fn update_remote(
+        &mut self,
+        remote_messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
+    ) -> Vec<GraphcastMessage<RadioPayloadMessage>> {
+        self.remote_messages = Arc::new(SyncMutex::new(remote_messages));
+        self.remote_messages()
     }
 
     /// Add message to remote_messages
+    /// Generalize RadioPayloadMessage
     pub fn add_remote_message(&self, msg: GraphcastMessage<RadioPayloadMessage>) {
+        trace!(msg = tracing::field::debug(&msg), "adding remote message");
         self.remote_messages.lock().unwrap().push(msg)
     }
 
@@ -137,6 +143,28 @@ impl PersistedState {
             .lock()
             .unwrap()
             .insert(deployment, comparison_result);
+    }
+
+    pub async fn valid_messages(
+        &mut self,
+        graph_node_endpoint: &str,
+    ) -> Vec<GraphcastMessage<RadioPayloadMessage>> {
+        let remote_messages = self.remote_messages();
+        let mut valid_messages = vec![];
+
+        for message in remote_messages {
+            let is_valid = tokio::runtime::Runtime::new().unwrap().block_on(
+                message
+                    .payload
+                    .validity_check(&message, graph_node_endpoint),
+            );
+
+            if is_valid.is_ok() {
+                valid_messages.push(message);
+            }
+        }
+
+        self.update_remote(valid_messages).await
     }
 
     pub async fn handle_comparison_result(
@@ -195,10 +223,14 @@ impl PersistedState {
 
     /// Clean remote_messages
     pub fn clean_remote_messages(&self, block_number: u64, deployment: String) {
+        trace!(
+            msgs = tracing::field::debug(&self.remote_messages.lock().unwrap()),
+            "cleaning these messages"
+        );
         self.remote_messages
             .lock()
             .unwrap()
-            .retain(|msg| msg.block_number >= block_number || msg.identifier != deployment)
+            .retain(|msg| msg.payload.block_number >= block_number || msg.identifier != deployment)
     }
 
     /// Clean local_attestations
@@ -330,16 +362,20 @@ mod tests {
         let nonce: i64 = 123321;
         let block_number: u64 = 0;
         let block_hash: String = "0xblahh".to_string();
-        let radio_msg = RadioPayloadMessage::new(hash.clone(), content);
-        let sig: String = "4be6a6b7f27c4086f22e8be364cbdaeddc19c1992a42b08cbe506196b0aafb0a68c8c48a730b0e3155f4388d7cc84a24b193d091c4a6a4e8cd6f1b305870fae61b".to_string();
-        let msg = GraphcastMessage::new(
-            hash,
-            Some(radio_msg),
-            nonce,
+        let radio_msg = RadioPayloadMessage::build(
+            hash.clone(),
+            content,
             NetworkName::Goerli,
             block_number,
             block_hash,
             String::from("0xe9a1cabd57700b17945fd81feefba82340d9568f"),
+        );
+        let sig: String = "4be6a6b7f27c4086f22e8be364cbdaeddc19c1992a42b08cbe506196b0aafb0a68c8c48a730b0e3155f4388d7cc84a24b193d091c4a6a4e8cd6f1b305870fae61b".to_string();
+        let msg = GraphcastMessage::new(
+            hash,
+            nonce,
+            String::from("0xe9a1cabd57700b17945fd81feefba82340d9568f"),
+            radio_msg,
             sig,
         )
         .expect("Shouldn't get here since the message is purposefully constructed for testing");

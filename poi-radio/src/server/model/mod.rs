@@ -1,6 +1,5 @@
 use async_graphql::{Context, EmptyMutation, EmptySubscription, Object, Schema, SimpleObject};
 use chrono::Utc;
-
 use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
 
@@ -284,13 +283,12 @@ impl POIRadioContext {
             let locals = attestations_to_vec(&self.local_attestations(identifier.clone(), block));
 
             let config = self.radio_config();
-            let network_subgraph = config.network_subgraph.clone();
 
             let mut res = vec![];
             for entry in locals {
                 let deployment_identifier = entry.deployment.clone();
                 let msgs = self.remote_messages_filtered(&identifier, &block);
-                let remote_attestations = process_messages(msgs, &network_subgraph)
+                let remote_attestations = process_messages(msgs, &config.callbook())
                     .await
                     .ok()
                     .and_then(|r| {
@@ -327,7 +325,7 @@ fn filter_remote_messages(
         None => true, // Skip check
     };
     let is_matching_block = match block {
-        Some(b) => entry.block_number == *b,
+        Some(b) => entry.payload.block_number == *b,
         None => true, // Skip check
     };
     is_matching_identifier && is_matching_block
