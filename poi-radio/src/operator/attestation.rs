@@ -198,13 +198,25 @@ pub fn combine_senders(attestations: &[Attestation]) -> Vec<String> {
 /// If they don't exist, then return default value that shall never be validated to trigger
 pub fn local_comparison_point(
     local_attestations: &LocalAttestationsMap,
+    remote_messages: &Vec<GraphcastMessage<RadioPayloadMessage>>,
     id: String,
     collect_window_duration: i64,
 ) -> Option<(u64, i64)> {
+    debug!(local = tracing::field::debug(&local_attestations), 
+    remote_messages = tracing::field::debug(&remote_messages),
+    "find local comparison point");
     if let Some(blocks_map) = local_attestations.get(&id) {
         // Find the attestaion by the smallest block
+        let remote_blocks = remote_messages
+                .iter()
+                .filter(|m| m.identifier == id.clone())
+                .map(|m| m.payload.block_number)
+                .collect::<Vec<u64>>();
         blocks_map
             .iter()
+            .filter(|(&block, local_a)| 
+                remote_blocks.contains(&block)
+            )
             .min_by_key(|(&min_block, attestation)| {
                 // unwrap is okay because we add timestamp at local creation of attestation
                 (min_block, *attestation.timestamp.first().unwrap())
@@ -1007,6 +1019,24 @@ mod tests {
         assert_eq!(local.lock().unwrap().get("hash2").unwrap().len(), 3);
     }
 
+    pub fn test_msg_vec() -> Vec<GraphcastMessage<RadioPayloadMessage>>{
+        vec![GraphcastMessage {
+            identifier: String::from("hash"),
+            nonce: 2,
+            graph_account: String::from("0x7e6528e4ce3055e829a32b5dc4450072bac28bc6"),
+            payload: RadioPayloadMessage {
+                identifier: String::from("hash"),
+                content: String::from("awesome-npoi"),
+                nonce: 2,
+                network: String::from("goerli"),
+                block_number: 42,
+                block_hash: String::from("4dbba1ba9fb18b0034965712598be1368edcf91ae2c551d59462aab578dab9c5"),
+                graph_account: String::from("0xa1"),
+            },
+            signature: String::from("03b197380ab9ee3a9fcaea1301224ad1ff02e9e414275fd79d6ee463b21eb6957af7670a26b0a7f8a6316d95dba8497f2bd67b32b39be07073cf81beff0b37961b"),
+        }]
+    }
+
     #[tokio::test]
     async fn local_attestation_pointer_success() {
         let mut local_blocks: HashMap<u64, Attestation> = HashMap::new();
@@ -1038,8 +1068,12 @@ mod tests {
         let mut local_attestations: HashMap<String, HashMap<u64, Attestation>> = HashMap::new();
         local_attestations.insert("hash".to_string(), local_blocks.clone());
         local_attestations.insert("hash2".to_string(), local_blocks);
+        println!(
+            "find local comparison point: {:#?}\n{:#?}",
+            &local_attestations, 
+            &test_msg_vec());
         let (block_num, collect_window_end) =
-            local_comparison_point(&local_attestations, "hash".to_string(), 120).unwrap();
+            local_comparison_point(&local_attestations, &test_msg_vec(), "hash".to_string(), 120).unwrap();
 
         assert_eq!(block_num, 42);
         assert_eq!(collect_window_end, 122);

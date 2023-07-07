@@ -153,11 +153,12 @@ impl PersistedState {
         let mut valid_messages = vec![];
 
         for message in remote_messages {
-            let is_valid = tokio::runtime::Runtime::new().unwrap().block_on(
+            let is_valid = 
                 message
                     .payload
-                    .validity_check(&message, graph_node_endpoint),
-            );
+                    .validity_check(&message, graph_node_endpoint)
+                    .await
+            ;
 
             if is_valid.is_ok() {
                 valid_messages.push(message);
@@ -365,6 +366,7 @@ mod tests {
         let radio_msg = RadioPayloadMessage::build(
             hash.clone(),
             content,
+            nonce,
             NetworkName::Goerli,
             block_number,
             block_hash,

@@ -105,6 +105,7 @@ impl RadioPayloadMessage {
     pub fn build(
         identifier: String,
         content: String,
+        nonce: i64,
         network: NetworkName,
         block_number: u64,
         block_hash: String,
@@ -113,7 +114,7 @@ impl RadioPayloadMessage {
         RadioPayloadMessage::new(
             identifier,
             content,
-            Utc::now().timestamp(),
+            nonce,
             network.to_string(),
             block_number,
             block_hash,

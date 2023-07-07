@@ -87,6 +87,7 @@ async fn start_sender(config: TestSenderConfig) {
                     let radio_payload = RadioPayloadMessage::build(
                         topic.clone(),
                         config.poi.clone().unwrap(),
+                        timestamp,
                         NetworkName::Goerli,
                         timestamp.try_into().unwrap(),
                         config.block_hash.clone().unwrap(),
@@ -96,6 +97,7 @@ async fn start_sender(config: TestSenderConfig) {
                     let mut graphcast_message = GraphcastMessage::build(
                         &wallet,
                         topic.clone(),
+                        timestamp,
                         "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
                         radio_payload,
                     )
@@ -122,6 +124,7 @@ async fn start_sender(config: TestSenderConfig) {
                     let graphcast_message = GraphcastMessage::build(
                         &wallet,
                         topic.clone(),
+                        timestamp,
                         "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
                         payload,
                     )

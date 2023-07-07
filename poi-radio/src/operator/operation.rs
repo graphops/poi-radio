@@ -142,6 +142,7 @@ pub async fn message_send(
         .await
     {
         Ok(content) => {
+            let nonce = Utc::now().timestamp();
             let block_hash = callbook
                 .block_hash(&network_name.to_string(), message_block)
                 .await
@@ -149,12 +150,13 @@ pub async fn message_send(
             let radio_message = RadioPayloadMessage::build(
                 id.clone(),
                 content.clone(),
+                nonce,
                 network_name,
                 message_block,
                 block_hash,
                 graphcast_agent.graphcast_identity.graph_account.clone(),
             );
-            match graphcast_agent.send_message(&id, radio_message).await {
+            match graphcast_agent.send_message(&id, radio_message, nonce).await {
                 Ok(msg_id) => {
                     save_local_attestation(
                         local_attestations.clone(),
@@ -197,6 +199,7 @@ pub async fn message_comparison(
 
     let (compare_block, collect_window_end) = match local_comparison_point(
         &local_attestations,
+        &messages,
         id.clone(),
         collect_window_duration,
     ) {
@@ -353,6 +356,7 @@ impl RadioOperator {
             Ok(content) => Ok(RadioPayloadMessage::build(
                 id.clone(),
                 content,
+                Utc::now().timestamp(),
                 network_name,
                 message_block,
                 block_hash,
@@ -484,8 +488,18 @@ impl RadioOperator {
                             .with_label_values(&[&r.deployment_hash()])
                             .set(self.state().remote_messages().len().try_into().unwrap());
                     }
+                    // Err(OperationError::CompareTrigger(d, b, m)) => {
+                    //     trace!(m, "Compare handles");
+                    //     self.persisted_state
+                    //         .clean_local_attestations(b, d.clone());
+                    //     self.persisted_state
+                    //         .clean_remote_messages(b, d.clone());
+                        
+                    //     compare_ops.push(Err(OperationError::CompareTrigger(d, b, m).clone_with_inner()));
+                    // }
                     Err(e) => {
                         trace!(err = tracing::field::debug(&e), "Compare handles");
+                        
                         compare_ops.push(Err(e.clone_with_inner()));
                     }
                 }

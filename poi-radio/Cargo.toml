@@ -10,7 +10,7 @@ keywords = ["graphprotocol", "data-integrity", "Indexer", "waku", "p2p"]
 categories = ["network-programming", "web-programming::http-client"]
 
 [dependencies]
-graphcast-sdk = { package = "graphcast-sdk", git = "https://github.com/graphops/graphcast-sdk", branch = "hope/msg-restructure" }
+graphcast-sdk = { package = "graphcast-sdk", git = "https://github.com/graphops/graphcast-sdk", rev = "7b4be3b" }
 prost = "0.11"
 once_cell = "1.17"
 chrono = "0.4"
