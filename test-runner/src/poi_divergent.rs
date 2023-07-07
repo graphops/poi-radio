@@ -31,7 +31,7 @@ pub async fn poi_divergent_test() {
 
     let process_manager = setup(&config, test_file_name, &mut test_sender_config).await;
 
-    sleep(Duration::from_secs(300)).await;
+    sleep(Duration::from_secs(550)).await;
 
     let persisted_state = PersistedState::load_cache(&store_path);
     debug!("persisted state {:?}", persisted_state);

@@ -155,16 +155,20 @@ impl RadioPayloadMessage {
 
     /// Check duplicated fields: payload message has duplicated fields with GraphcastMessage, the values must be the same
     pub fn valid_outer(&self, outer: &GraphcastMessage<Self>) -> Result<&Self, BuildMessageError> {
-        if self.nonce == outer.nonce
-            && self.graph_account == outer.graph_account
-            && self.identifier == outer.identifier
-        {
+        let nonce_check = self.nonce == outer.nonce;
+        let account_check = self.graph_account == outer.graph_account;
+        let identifier_check = self.identifier == outer.identifier;
+
+        if nonce_check && account_check && identifier_check {
             Ok(self)
         } else {
             Err(BuildMessageError::InvalidFields(anyhow::anyhow!(
-                "Radio message wrapped by inconsistent GraphcastMessage: {:#?} <- {:#?}",
+                "Radio message wrapped by inconsistent GraphcastMessage: {:#?} <- {:#?}\nNonce check: {:#?}\nAccount check: {:#?}\nIdentifier check: {:#?}",
                 &self,
                 &outer,
+                nonce_check,
+                account_check,
+                identifier_check
             )))
         }
     }
