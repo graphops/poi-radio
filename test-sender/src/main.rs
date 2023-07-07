@@ -81,30 +81,30 @@ async fn start_sender(config: TestSenderConfig) {
             let content_topic = format!("/{}/0/{}/proto", config.radio_name, topic);
             let content_topic = WakuContentTopic::from_str(&content_topic).unwrap();
 
+            let nonce = config.nonce.clone().unwrap().parse::<i64>().unwrap();
+
             let radio_payload_clone = config.radio_payload.clone();
             match radio_payload_clone.as_deref() {
                 Some("radio_payload_message") => {
                     let radio_payload = RadioPayloadMessage::build(
                         topic.clone(),
                         config.poi.clone().unwrap(),
-                        timestamp,
+                        nonce,
                         NetworkName::Goerli,
                         timestamp.try_into().unwrap(),
                         config.block_hash.clone().unwrap(),
                         "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
                     );
 
-                    let mut graphcast_message = GraphcastMessage::build(
+                    let graphcast_message = GraphcastMessage::build(
                         &wallet,
                         topic.clone(),
-                        timestamp,
+                        nonce,
                         "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
                         radio_payload,
                     )
                     .await
                     .unwrap();
-
-                    graphcast_message.nonce = config.nonce.clone().unwrap().parse::<i64>().unwrap();
 
                     match graphcast_message.send_to_waku(
                         &node_handle,
@@ -124,7 +124,7 @@ async fn start_sender(config: TestSenderConfig) {
                     let graphcast_message = GraphcastMessage::build(
                         &wallet,
                         topic.clone(),
-                        timestamp,
+                        nonce,
                         "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
                         payload,
                     )

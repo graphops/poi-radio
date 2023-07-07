@@ -1,7 +1,6 @@
 use derive_getters::Getters;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex as SyncMutex};
-use std::thread;
 use std::time::Duration;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::{interval, sleep, timeout};
@@ -150,14 +149,26 @@ impl RadioOperator {
             .register_handler(Arc::new(AsyncMutex::new(handler)))
             .expect("Could not register handler");
         let state_ref = self.persisted_state.clone();
-        thread::spawn(move || {
+
+        let config = self.config.clone();
+
+        tokio::spawn(async move {
             for msg in receiver {
                 trace!(
                     "Radio operator received a validated message from Graphcast agent: {:#?}",
                     msg
                 );
                 let identifier = msg.identifier.clone();
-                state_ref.add_remote_message(msg.clone());
+
+                let is_valid = msg
+                    .payload
+                    .validity_check(&msg, config.graph_node_endpoint())
+                    .await;
+
+                if is_valid.is_ok() {
+                    state_ref.add_remote_message(msg.clone());
+                }
+
                 CACHED_MESSAGES.with_label_values(&[&identifier]).set(
                     state_ref
                         .remote_messages()

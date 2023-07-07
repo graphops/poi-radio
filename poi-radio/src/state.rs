@@ -125,16 +125,6 @@ impl PersistedState {
         self.remote_messages.lock().unwrap().push(msg)
     }
 
-    /// Update comparison_results
-    pub fn update_comparison_result(&self, comparison_result: ComparisonResult) {
-        let deployment = comparison_result.clone().deployment;
-
-        self.comparison_results
-            .lock()
-            .unwrap()
-            .insert(deployment, comparison_result);
-    }
-
     /// Add entry to comparison_results
     pub fn add_comparison_result(&self, comparison_result: ComparisonResult) {
         let deployment = comparison_result.clone().deployment;
@@ -302,7 +292,6 @@ impl PersistedState {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use graphcast_sdk::networks::NetworkName;
 
     use crate::operator::attestation::{save_local_attestation, ComparisonResultType};
