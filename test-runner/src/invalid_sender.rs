@@ -19,7 +19,7 @@ pub async fn invalid_sender_test() {
     let mut config = test_config();
     config.persistence_file_path = Some(store_path.clone());
     config.topics = radio_topics.clone();
-    config.id_validation = Some(IdentityValidation::RegisteredIndexer);
+    config.id_validation = IdentityValidation::RegisteredIndexer;
 
     let mut test_sender_config = TestSenderConfig {
         topics: test_sender_topics,

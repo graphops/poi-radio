@@ -14,6 +14,7 @@ use graphcast_sdk::{
     },
     init_tracing, wallet_address,
 };
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tracing::{debug, info, trace};
@@ -295,7 +296,7 @@ pub struct Config {
         registered-indexer: must be registered at Graphcast Registry, correspond to and Indexer statisfying indexer minimum stake requirement, \n
         indexer: must be registered at Graphcast Registry or is a Graph Account, correspond to and Indexer statisfying indexer minimum stake requirement"
     )]
-    pub id_validation: Option<IdentityValidation>,
+    pub id_validation: IdentityValidation,
     #[clap(
         long,
         value_name = "TOPIC_UPDATE_INTERVAL",
@@ -348,7 +349,8 @@ impl Config {
             self.radio_name.clone(),
             self.registry_subgraph.clone(),
             self.network_subgraph.clone(),
-            self.graph_node_endpoint.clone(),
+            self.id_validation.clone(),
+            Some(self.graph_node_endpoint.clone()),
             Some(self.boot_node_addresses.clone()),
             Some(self.graphcast_network.to_owned()),
             Some(topics),
@@ -359,7 +361,6 @@ impl Config {
             self.filter_protocol,
             self.discv5_enrs.clone(),
             self.discv5_port,
-            self.id_validation.clone(),
         )
         .await
     }
@@ -393,9 +394,12 @@ impl Config {
             // panic_hook(&path);
             let state = PersistedState::load_cache(path);
             trace!(
+                local_attestations = tracing::field::debug(&state.local_attestations()),
+                remote_messages = tracing::field::debug(&state.remote_messages()),
                 state = tracing::field::debug(&state),
                 "Loaded Persisted state cache"
             );
+
             state
         } else {
             debug!("Created new state");
@@ -412,7 +416,7 @@ impl Config {
         CallBook::new(
             self.graph_node_endpoint.clone(),
             self.registry_subgraph.clone(),
-            self.network_subgraph.clone(),
+            Some(self.network_subgraph.clone()),
         )
     }
 

@@ -5,13 +5,13 @@ use thiserror::Error;
 
 use crate::{
     config::Config,
+    messages::poi::PublicPoiMessage,
     operator::attestation::{
-        self, attestations_to_vec, compare_attestation, process_messages, Attestation,
+        self, attestations_to_vec, compare_attestation, process_ppoi_message, Attestation,
         AttestationEntry, AttestationError, ComparisonResult, ComparisonResultType,
         LocalAttestationsMap,
     },
     state::PersistedState,
-    RadioPayloadMessage,
 };
 use graphcast_sdk::{graphcast_agent::message_typing::GraphcastMessage, graphql::QueryError};
 
@@ -28,7 +28,7 @@ impl QueryRoot {
         ctx: &Context<'_>,
         identifier: Option<String>,
         block: Option<u64>,
-    ) -> Result<Vec<GraphcastMessage<RadioPayloadMessage>>, HttpServiceError> {
+    ) -> Result<Vec<GraphcastMessage<PublicPoiMessage>>, HttpServiceError> {
         let msgs = ctx
             .data_unchecked::<Arc<POIRadioContext>>()
             .remote_messages_filtered(&identifier, &block);
@@ -237,7 +237,7 @@ impl POIRadioContext {
         }
     }
 
-    pub fn remote_messages(&self) -> Vec<GraphcastMessage<RadioPayloadMessage>> {
+    pub fn remote_messages(&self) -> Vec<GraphcastMessage<PublicPoiMessage>> {
         self.persisted_state.remote_messages()
     }
 
@@ -245,7 +245,7 @@ impl POIRadioContext {
         &self,
         identifier: &Option<String>,
         block: &Option<u64>,
-    ) -> Vec<GraphcastMessage<RadioPayloadMessage>> {
+    ) -> Vec<GraphcastMessage<PublicPoiMessage>> {
         let msgs = self.remote_messages();
         let filtered = msgs
             .iter()
@@ -288,7 +288,7 @@ impl POIRadioContext {
             for entry in locals {
                 let deployment_identifier = entry.deployment.clone();
                 let msgs = self.remote_messages_filtered(&identifier, &block);
-                let remote_attestations = process_messages(msgs, &config.callbook())
+                let remote_attestations = process_ppoi_message(msgs, &config.callbook())
                     .await
                     .ok()
                     .and_then(|r| {
@@ -316,7 +316,7 @@ impl POIRadioContext {
 
 /// Filter funciton for Attestations on deployment and block
 fn filter_remote_messages(
-    entry: &GraphcastMessage<RadioPayloadMessage>,
+    entry: &GraphcastMessage<PublicPoiMessage>,
     identifier: &Option<String>,
     block: &Option<u64>,
 ) -> bool {

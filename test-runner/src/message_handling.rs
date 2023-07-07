@@ -21,6 +21,7 @@ pub async fn send_and_receive_test() {
     let mut config = test_config();
     config.persistence_file_path = Some(store_path.clone());
     config.topics = radio_topics.clone();
+    config.topic_update_interval = 10;
 
     let mut test_sender_config = TestSenderConfig {
         topics: test_sender_topics,
@@ -34,7 +35,7 @@ pub async fn send_and_receive_test() {
 
     let process_manager = setup(&config, test_file_name, &mut test_sender_config).await;
 
-    sleep(Duration::from_secs(89)).await;
+    sleep(Duration::from_secs(85)).await;
 
     let persisted_state = PersistedState::load_cache(&store_path);
     debug!("persisted state {:?}", persisted_state);
@@ -42,6 +43,11 @@ pub async fn send_and_receive_test() {
     teardown(process_manager, &store_path);
 
     let local_attestations = persisted_state.local_attestations();
+    debug!(
+        "local tattestations {:#?}, \nchecking result: {:#?}",
+        local_attestations,
+        !local_attestations.is_empty()
+    );
     let remote_messages = persisted_state.remote_messages();
 
     assert!(

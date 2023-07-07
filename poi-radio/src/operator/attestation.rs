@@ -18,11 +18,12 @@ use graphcast_sdk::{
 };
 
 use crate::{
+    messages::poi::PublicPoiMessage,
     metrics::{
         ACTIVE_INDEXERS, DIVERGING_SUBGRAPHS, INDEXER_COUNT_BY_NPOI, LOCAL_NPOIS_TO_COMPARE,
     },
     state::PersistedState,
-    OperationError, RadioPayloadMessage,
+    OperationError,
 };
 
 use super::Notifier;
@@ -108,8 +109,8 @@ pub fn attestations_to_vec(attestations: &LocalAttestationsMap) -> Vec<Attestati
 }
 
 #[autometrics]
-pub async fn process_messages(
-    messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
+pub async fn process_ppoi_message(
+    messages: Vec<GraphcastMessage<PublicPoiMessage>>,
     callbook: &CallBook,
 ) -> Result<RemoteAttestationsMap, AttestationError> {
     let mut remote_attestations: RemoteAttestationsMap = HashMap::new();

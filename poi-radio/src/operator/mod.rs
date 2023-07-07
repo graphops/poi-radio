@@ -1,4 +1,5 @@
 use derive_getters::Getters;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex as SyncMutex};
 use std::time::Duration;
@@ -13,13 +14,16 @@ use graphcast_sdk::{
 };
 
 use crate::chainhead_block_str;
+use crate::messages::poi::PublicPoiMessage;
+
+
 use crate::metrics::handle_serve_metrics;
 use crate::operator::attestation::log_gossip_summary;
 use crate::operator::attestation::process_comparison_results;
 use crate::server::run_server;
 use crate::state::PersistedState;
+use crate::GRAPHCAST_AGENT;
 use crate::{config::Config, metrics::CACHED_MESSAGES};
-use crate::{RadioPayloadMessage, GRAPHCAST_AGENT};
 
 use self::notifier::Notifier;
 
@@ -85,7 +89,7 @@ pub struct RadioOperator {
 impl RadioOperator {
     /// Create a radio operator with radio configurations, persisted data,
     /// graphcast agent, and control flow
-    pub async fn new(config: Config) -> RadioOperator {
+    pub async fn new(config: &Config) -> RadioOperator {
         debug!("Initializing Radio operator");
         let _wallet = build_wallet(
             config
@@ -108,10 +112,10 @@ impl RadioOperator {
         debug!("Set global static instance of graphcast_agent");
         _ = GRAPHCAST_AGENT.set(graphcast_agent.clone());
 
-        let notifier = Notifier::from_config(&config);
+        let notifier = Notifier::from_config(config);
 
         RadioOperator {
-            config,
+            config: config.clone(),
             persisted_state,
             graphcast_agent,
             notifier,
@@ -141,8 +145,11 @@ impl RadioOperator {
             .update_content_topics(topics.clone())
             .await;
 
-        let (sender, receiver) = mpsc::channel::<GraphcastMessage<RadioPayloadMessage>>();
-        let handler = RadioOperator::radio_msg_handler(SyncMutex::new(sender));
+        // let (poi_sender, poi_receiver) = mpsc::channel::<GraphcastMessage<PublicPoiMessage>>();
+        // let (version_sender, version_receiver) = mpsc::channel::<GraphcastMessage<VersionUpgradeMessage>>();
+
+        let (sender, receiver) = mpsc::channel::<GraphcastMessage<PublicPoiMessage>>();
+        let handler = RadioOperator::radio_msg_handler::<PublicPoiMessage>(SyncMutex::new(sender));
         GRAPHCAST_AGENT
             .get()
             .unwrap()
@@ -152,29 +159,45 @@ impl RadioOperator {
 
         let config = self.config.clone();
 
+        let graph_node = self.config.graph_node_endpoint().clone();
         tokio::spawn(async move {
             for msg in receiver {
                 trace!(
                     "Radio operator received a validated message from Graphcast agent: {:#?}",
                     msg
                 );
+                // let identifier = msg.identifier.clone();
+
+                // let is_valid = msg
+                //     .validity_check(&msg, config.graph_node_endpoint())
+                //     .await;
+
+                // if is_valid.is_ok() {
+                //     state_ref.add_remote_message(msg.clone());
+                // }
+
+                // CACHED_MESSAGES.with_label_values(&[&identifier]).set(
+                //     state_ref
+                //         .remote_messages()
+                //         .iter()
+                //         .filter(|m| m.identifier == identifier)
+                //         .collect::<Vec<&GraphcastMessage<RadioPayloadMessage>>>()
+                //         .len()
+                //         .try_into()
+                //         .unwrap(),
+                // );
                 let identifier = msg.identifier.clone();
 
-                let is_valid = msg
-                    .payload
-                    .validity_check(&msg, config.graph_node_endpoint())
-                    .await;
-
+                let is_valid = msg.payload.validity_check(&msg, &graph_node).await;
                 if is_valid.is_ok() {
                     state_ref.add_remote_message(msg.clone());
                 }
-
                 CACHED_MESSAGES.with_label_values(&[&identifier]).set(
                     state_ref
                         .remote_messages()
                         .iter()
                         .filter(|m| m.identifier == identifier)
-                        .collect::<Vec<&GraphcastMessage<RadioPayloadMessage>>>()
+                        .collect::<Vec<&GraphcastMessage<PublicPoiMessage>>>()
                         .len()
                         .try_into()
                         .unwrap(),
@@ -182,6 +205,27 @@ impl RadioOperator {
             }
         });
     }
+    //     for msg in receiver {
+    //         //
+    //         trace!(
+    //             "Radio operator received a validated message from Graphcast agent: {:#?}",
+    //             msg
+    //         );
+
+    //         // let identifier = msg.identifier.clone();
+    //         // state_ref.add_remote_message(msg.clone());
+    //         // CACHED_MESSAGES.with_label_values(&[&identifier]).set(
+    //         //     state_ref
+    //         //         .remote_messages()
+    //         //         .iter()
+    //         //         .filter(|m| m.identifier == identifier)
+    //         //         .collect::<Vec<&GraphcastMessage<PublicPoiMessage>>>()
+    //         //         .len()
+    //         //         .try_into()
+    //         //         .unwrap(),
+    //         // );
+    //     }
+    // });
 
     pub fn graphcast_agent(&self) -> &GraphcastAgent {
         &self.graphcast_agent
@@ -343,6 +387,11 @@ impl RadioOperator {
                             );
                         let identifiers = self.graphcast_agent().content_identifiers().await;
                         let blocks_str = chainhead_block_str(&network_chainhead_blocks);
+
+                        trace!(
+                            state = tracing::field::debug(&self.state()),
+                            "current state",
+                        );
 
                         let comparison_res = self.compare_poi(
                             identifiers.clone(),

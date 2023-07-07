@@ -58,13 +58,13 @@ fn gossip_poi_bench(c: &mut Criterion) {
         discv5_enrs: None,
         discv5_port: None,
         filter_protocol: None,
-        id_validation: Some(IdentityValidation::NoCheck),
+        id_validation: IdentityValidation::NoCheck,
         topic_update_interval: 600,
     });
 
     c.bench_function("gossip_poi", move |b| {
         b.to_async(FuturesExecutor).iter(|| async {
-            RadioOperator::new(config.clone())
+            RadioOperator::new(&config)
                 .await
                 .gossip_poi(
                     identifiers.clone(),

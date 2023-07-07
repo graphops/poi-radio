@@ -1,13 +1,15 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
+
 use std::path::Path;
+
+use std::fs;
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::{
     collections::HashMap,
     fs::{remove_file, File},
     io::{BufReader, Write},
 };
-use tracing::{trace, warn};
+use tracing::{info, trace, warn};
 
 use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
 
@@ -15,10 +17,11 @@ use crate::operator::attestation::{
     clear_local_attestation, ComparisonResult, ComparisonResultType,
 };
 use crate::operator::notifier::Notifier;
-use crate::{operator::attestation::Attestation, RadioPayloadMessage};
+
+use crate::{messages::poi::PublicPoiMessage, operator::attestation::Attestation};
 
 type Local = Arc<SyncMutex<HashMap<String, HashMap<u64, Attestation>>>>;
-type Remote = Arc<SyncMutex<Vec<GraphcastMessage<RadioPayloadMessage>>>>;
+type Remote = Arc<SyncMutex<Vec<GraphcastMessage<PublicPoiMessage>>>>;
 type ComparisonResults = Arc<SyncMutex<HashMap<String, ComparisonResult>>>;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -86,7 +89,7 @@ impl PersistedState {
     }
 
     /// Getter for remote_messages
-    pub fn remote_messages(&self) -> Vec<GraphcastMessage<RadioPayloadMessage>> {
+    pub fn remote_messages(&self) -> Vec<GraphcastMessage<PublicPoiMessage>> {
         self.remote_messages.lock().unwrap().clone()
     }
 
@@ -112,15 +115,15 @@ impl PersistedState {
     /// Update remote_messages
     pub async fn update_remote(
         &mut self,
-        remote_messages: Vec<GraphcastMessage<RadioPayloadMessage>>,
-    ) -> Vec<GraphcastMessage<RadioPayloadMessage>> {
+        remote_messages: Vec<GraphcastMessage<PublicPoiMessage>>,
+    ) -> Vec<GraphcastMessage<PublicPoiMessage>> {
         self.remote_messages = Arc::new(SyncMutex::new(remote_messages));
         self.remote_messages()
     }
 
     /// Add message to remote_messages
-    /// Generalize RadioPayloadMessage
-    pub fn add_remote_message(&self, msg: GraphcastMessage<RadioPayloadMessage>) {
+    /// Generalize PublicPoiMessage
+    pub fn add_remote_message(&self, msg: GraphcastMessage<PublicPoiMessage>) {
         trace!(msg = tracing::field::debug(&msg), "adding remote message");
         self.remote_messages.lock().unwrap().push(msg)
     }
@@ -135,10 +138,10 @@ impl PersistedState {
             .insert(deployment, comparison_result);
     }
 
-    pub async fn valid_messages(
+    pub async fn valid_ppoi_messages(
         &mut self,
         graph_node_endpoint: &str,
-    ) -> Vec<GraphcastMessage<RadioPayloadMessage>> {
+    ) -> Vec<GraphcastMessage<PublicPoiMessage>> {
         let remote_messages = self.remote_messages();
         let mut valid_messages = vec![];
 
@@ -246,12 +249,18 @@ impl PersistedState {
 
     /// Load cache into persisted state
     pub fn load_cache(path: &str) -> PersistedState {
+        info!(path, "load cache from path");
         let file = match File::open(path) {
             Ok(f) => f,
-            Err(_) => {
-                warn!("No persisted state file provided, create an empty state");
+            Err(e) => {
+                warn!(
+                    err = tracing::field::debug(&e),
+                    "No persisted state file provided, create an empty state"
+                );
                 // No state persisted, create new
-                return PersistedState::new(None, None, None);
+                let state = PersistedState::new(None, None, None);
+                state.update_cache(path);
+                return state;
             }
         };
 
@@ -278,13 +287,17 @@ impl PersistedState {
 
 // TODO: panic hook for updating the cache file before exiting the program
 // /// Set up panic hook to store persisted state
-// pub fn panic_hook<'a>(file_path: &str){
+// pub fn panic_hook<'a>(file_path: &str) {
 //     let path = String::from_str(file_path).expect("Invalid file path provided");
 //     panic::set_hook(Box::new(move |panic_info| panic_cache(panic_info, &path)));
 // }
 
 // pub fn panic_cache(panic_info: &PanicInfo<'_>, file_path: &str) {
-//     update_cache(file_path);
+//     RADIO_OPERATOR
+//         .get()
+//         .unwrap()
+//         .state()
+//         .update_cache(file_path);
 //     // Log panic information and program state
 //     eprintln!("Panic occurred! Panic info: {:?}", panic_info);
 // }
@@ -350,7 +363,7 @@ mod tests {
         let nonce: i64 = 123321;
         let block_number: u64 = 0;
         let block_hash: String = "0xblahh".to_string();
-        let radio_msg = RadioPayloadMessage::build(
+        let radio_msg = PublicPoiMessage::build(
             hash.clone(),
             content,
             nonce,

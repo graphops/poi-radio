@@ -11,7 +11,7 @@ use graphcast_sdk::{
     init_tracing,
     networks::NetworkName,
 };
-use poi_radio::RadioPayloadMessage;
+use poi_radio::messages::poi::PublicPoiMessage;
 use test_utils::{config::TestSenderConfig, dummy_msg::DummyMsg, find_random_udp_port};
 use tracing::{error, info};
 use waku::{
@@ -86,7 +86,7 @@ async fn start_sender(config: TestSenderConfig) {
             let radio_payload_clone = config.radio_payload.clone();
             match radio_payload_clone.as_deref() {
                 Some("radio_payload_message") => {
-                    let radio_payload = RadioPayloadMessage::build(
+                    let radio_payload = PublicPoiMessage::build(
                         topic.clone(),
                         config.poi.clone().unwrap(),
                         nonce,
@@ -99,8 +99,8 @@ async fn start_sender(config: TestSenderConfig) {
                     let graphcast_message = GraphcastMessage::build(
                         &wallet,
                         topic.clone(),
-                        nonce,
                         "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
+                        nonce,
                         radio_payload,
                     )
                     .await
@@ -124,8 +124,8 @@ async fn start_sender(config: TestSenderConfig) {
                     let graphcast_message = GraphcastMessage::build(
                         &wallet,
                         topic.clone(),
-                        nonce,
                         "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
+                        timestamp,
                         payload,
                     )
                     .await

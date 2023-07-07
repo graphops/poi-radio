@@ -15,7 +15,7 @@ use graphcast_sdk::graphcast_agent::message_typing::IdentityValidation;
 use mock_server::{start_mock_server, ServerState};
 use poi_radio::{
     config::{Config, CoverageLevel},
-    RadioPayloadMessage,
+    messages::poi::PublicPoiMessage,
 };
 use prost::Message;
 use rand::Rng;
@@ -221,20 +221,15 @@ pub fn start_radio(config: &Config) -> Child {
         .arg("--indexer-address")
         .arg(&config.indexer_address)
         .arg("--id-validation")
-        .arg(
-            match config
-                .id_validation
-                .clone()
-                .unwrap_or(IdentityValidation::RegisteredIndexer)
-            {
-                IdentityValidation::NoCheck => "no-check",
-                IdentityValidation::ValidAddress => "valid-address",
-                IdentityValidation::GraphcastRegistered => "graphcast-registered",
-                IdentityValidation::GraphNetworkAccount => "graph-network-account",
-                IdentityValidation::RegisteredIndexer => "registered-indexer",
-                IdentityValidation::Indexer => "indexer",
-            },
-        )
+        .arg(match config.id_validation {
+            IdentityValidation::NoCheck => "no-check",
+            IdentityValidation::ValidAddress => "valid-address",
+            IdentityValidation::GraphcastRegistered => "graphcast-registered",
+            IdentityValidation::GraphNetworkAccount => "graph-network-account",
+            IdentityValidation::RegisteredIndexer => "registered-indexer",
+            IdentityValidation::Indexer => "indexer",
+            IdentityValidation::SubgraphStaker => "subgraph-staker",
+        })
         .spawn()
         .expect("Failed to start command")
 }
@@ -276,7 +271,7 @@ where
         && msg1.signature == msg2.signature
 }
 
-pub fn payloads_are_equal(payload1: &RadioPayloadMessage, payload2: &RadioPayloadMessage) -> bool {
+pub fn payloads_are_equal(payload1: &PublicPoiMessage, payload2: &PublicPoiMessage) -> bool {
     payload1.identifier == payload2.identifier
         && payload1.content == payload2.content
         && payload1.network == payload2.network

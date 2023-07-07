@@ -25,7 +25,7 @@ pub async fn topics_test() {
     let mut config = test_config();
     config.persistence_file_path = Some(store_path.clone());
     config.topics = radio_topics.clone();
-    config.topic_update_interval = 90;
+    config.topic_update_interval = 10;
 
     let mut test_sender_config = TestSenderConfig {
         topics: test_sender_topics,
@@ -41,13 +41,23 @@ pub async fn topics_test() {
 
     sleep(Duration::from_secs(89)).await;
 
-    let persisted_state = PersistedState::load_cache(&store_path);
-    debug!("persisted state {:?}", persisted_state);
+    // can be sure that file path is set to Some (after test_config()
+    let persisted_state = PersistedState::load_cache(&config.persistence_file_path.unwrap());
+    debug!(
+        local_attestations = tracing::field::debug(&persisted_state.local_attestations()),
+        remote_messages = tracing::field::debug(&persisted_state.remote_messages()),
+        persisted_state = tracing::field::debug(&persisted_state),
+        "loaded persisted state"
+    );
 
     let local_attestations = persisted_state.local_attestations();
     let remote_messages = persisted_state.remote_messages();
 
-    debug!("Starting topics_test");
+    debug!(
+        local_attestations = tracing::field::debug(&local_attestations),
+        remote_messages = tracing::field::debug(&remote_messages),
+        "Starting topics_test"
+    );
 
     assert!(
         !local_attestations.is_empty(),
