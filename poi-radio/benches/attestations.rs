@@ -4,8 +4,12 @@ extern crate criterion;
 
 mod attestation {
     use criterion::{black_box, criterion_group, Criterion};
-    use poi_radio::operator::attestation::{
-        compare_attestations, local_comparison_point, update_blocks, Attestation,
+    use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
+    use poi_radio::{
+        operator::attestation::{
+            compare_attestations, local_comparison_point, update_blocks, Attestation,
+        },
+        RadioPayloadMessage,
     };
     use std::collections::HashMap;
 
@@ -130,8 +134,28 @@ mod attestation {
         let local: HashMap<String, HashMap<u64, Attestation>> = black_box(local_attestations);
 
         c.bench_function("comparison_point", |b| {
-            b.iter(|| local_comparison_point(black_box(&local), "hash".to_string(), 120))
+            b.iter(|| {
+                local_comparison_point(black_box(&local), &test_msg_vec(), "hash".to_string(), 120)
+            })
         });
+    }
+
+    pub fn test_msg_vec() -> Vec<GraphcastMessage<RadioPayloadMessage>> {
+        vec![GraphcastMessage {
+            identifier: String::from("hash"),
+            nonce: 2,
+            graph_account: String::from("0x7e6528e4ce3055e829a32b5dc4450072bac28bc6"),
+            payload: RadioPayloadMessage {
+                identifier: String::from("hash"),
+                content: String::from("awesome-npoi"),
+                nonce: 2,
+                network: String::from("goerli"),
+                block_number: 42,
+                block_hash: String::from("4dbba1ba9fb18b0034965712598be1368edcf91ae2c551d59462aab578dab9c5"),
+                graph_account: String::from("0xa1"),
+            },
+            signature: String::from("03b197380ab9ee3a9fcaea1301224ad1ff02e9e414275fd79d6ee463b21eb6957af7670a26b0a7f8a6316d95dba8497f2bd67b32b39be07073cf81beff0b37961b"),
+        }]
     }
 }
 criterion_main!(attestation::benches);

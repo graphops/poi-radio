@@ -153,12 +153,10 @@ impl PersistedState {
         let mut valid_messages = vec![];
 
         for message in remote_messages {
-            let is_valid = 
-                message
-                    .payload
-                    .validity_check(&message, graph_node_endpoint)
-                    .await
-            ;
+            let is_valid = message
+                .payload
+                .validity_check(&message, graph_node_endpoint)
+                .await;
 
             if is_valid.is_ok() {
                 valid_messages.push(message);

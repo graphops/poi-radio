@@ -156,7 +156,10 @@ pub async fn message_send(
                 block_hash,
                 graphcast_agent.graphcast_identity.graph_account.clone(),
             );
-            match graphcast_agent.send_message(&id, radio_message, nonce).await {
+            match graphcast_agent
+                .send_message(&id, radio_message, nonce)
+                .await
+            {
                 Ok(msg_id) => {
                     save_local_attestation(
                         local_attestations.clone(),
@@ -494,12 +497,12 @@ impl RadioOperator {
                     //         .clean_local_attestations(b, d.clone());
                     //     self.persisted_state
                     //         .clean_remote_messages(b, d.clone());
-                        
+
                     //     compare_ops.push(Err(OperationError::CompareTrigger(d, b, m).clone_with_inner()));
                     // }
                     Err(e) => {
                         trace!(err = tracing::field::debug(&e), "Compare handles");
-                        
+
                         compare_ops.push(Err(e.clone_with_inner()));
                     }
                 }

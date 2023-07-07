@@ -1,6 +1,5 @@
 use async_graphql::{Error, ErrorExtensions, SimpleObject};
 use autometrics::autometrics;
-use chrono::Utc;
 use ethers_contract::EthAbiType;
 use ethers_core::types::transaction::eip712::Eip712;
 use ethers_derive_eip712::*;

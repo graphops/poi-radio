@@ -202,21 +202,21 @@ pub fn local_comparison_point(
     id: String,
     collect_window_duration: i64,
 ) -> Option<(u64, i64)> {
-    debug!(local = tracing::field::debug(&local_attestations), 
-    remote_messages = tracing::field::debug(&remote_messages),
-    "find local comparison point");
+    debug!(
+        local = tracing::field::debug(&local_attestations),
+        remote_messages = tracing::field::debug(&remote_messages),
+        "find local comparison point"
+    );
     if let Some(blocks_map) = local_attestations.get(&id) {
         // Find the attestaion by the smallest block
         let remote_blocks = remote_messages
-                .iter()
-                .filter(|m| m.identifier == id.clone())
-                .map(|m| m.payload.block_number)
-                .collect::<Vec<u64>>();
+            .iter()
+            .filter(|m| m.identifier == id.clone())
+            .map(|m| m.payload.block_number)
+            .collect::<Vec<u64>>();
         blocks_map
             .iter()
-            .filter(|(&block, local_a)| 
-                remote_blocks.contains(&block)
-            )
+            .filter(|(&block, _)| remote_blocks.contains(&block))
             .min_by_key(|(&min_block, attestation)| {
                 // unwrap is okay because we add timestamp at local creation of attestation
                 (min_block, *attestation.timestamp.first().unwrap())
@@ -1019,7 +1019,7 @@ mod tests {
         assert_eq!(local.lock().unwrap().get("hash2").unwrap().len(), 3);
     }
 
-    pub fn test_msg_vec() -> Vec<GraphcastMessage<RadioPayloadMessage>>{
+    pub fn test_msg_vec() -> Vec<GraphcastMessage<RadioPayloadMessage>> {
         vec![GraphcastMessage {
             identifier: String::from("hash"),
             nonce: 2,
@@ -1070,10 +1070,16 @@ mod tests {
         local_attestations.insert("hash2".to_string(), local_blocks);
         println!(
             "find local comparison point: {:#?}\n{:#?}",
-            &local_attestations, 
-            &test_msg_vec());
-        let (block_num, collect_window_end) =
-            local_comparison_point(&local_attestations, &test_msg_vec(), "hash".to_string(), 120).unwrap();
+            &local_attestations,
+            &test_msg_vec()
+        );
+        let (block_num, collect_window_end) = local_comparison_point(
+            &local_attestations,
+            &test_msg_vec(),
+            "hash".to_string(),
+            120,
+        )
+        .unwrap();
 
         assert_eq!(block_num, 42);
         assert_eq!(collect_window_end, 122);
