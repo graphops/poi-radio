@@ -59,7 +59,7 @@ pub fn test_config() -> Config {
         discv5_enrs: None,
         discv5_port: None,
         filter_protocol: None,
-        id_validation: IdentityValidation::GraphcastRegistered,
+        id_validation: IdentityValidation::ValidAddress,
         topic_update_interval: 600,
     }
 }

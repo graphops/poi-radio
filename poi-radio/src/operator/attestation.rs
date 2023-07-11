@@ -199,15 +199,10 @@ pub fn combine_senders(attestations: &[Attestation]) -> Vec<String> {
 /// If they don't exist, then return default value that shall never be validated to trigger
 pub fn local_comparison_point(
     local_attestations: &LocalAttestationsMap,
-    remote_messages: &Vec<GraphcastMessage<RadioPayloadMessage>>,
+    remote_messages: &[GraphcastMessage<PublicPoiMessage>],
     id: String,
     collect_window_duration: i64,
 ) -> Option<(u64, i64)> {
-    debug!(
-        local = tracing::field::debug(&local_attestations),
-        remote_messages = tracing::field::debug(&remote_messages),
-        "find local comparison point"
-    );
     if let Some(blocks_map) = local_attestations.get(&id) {
         // Find the attestaion by the smallest block
         let remote_blocks = remote_messages
@@ -1020,12 +1015,12 @@ mod tests {
         assert_eq!(local.lock().unwrap().get("hash2").unwrap().len(), 3);
     }
 
-    pub fn test_msg_vec() -> Vec<GraphcastMessage<RadioPayloadMessage>> {
+    pub fn test_msg_vec() -> Vec<GraphcastMessage<PublicPoiMessage>> {
         vec![GraphcastMessage {
             identifier: String::from("hash"),
             nonce: 2,
             graph_account: String::from("0x7e6528e4ce3055e829a32b5dc4450072bac28bc6"),
-            payload: RadioPayloadMessage {
+            payload: PublicPoiMessage {
                 identifier: String::from("hash"),
                 content: String::from("awesome-npoi"),
                 nonce: 2,

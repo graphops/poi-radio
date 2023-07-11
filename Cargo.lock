@@ -300,9 +300,9 @@ dependencies = [
 
 [[package]]
 name = "async-trait"
-version = "0.1.70"
+version = "0.1.71"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79fa67157abdfd688a259b6648808757db9347af834624f27ec646da976aee5d"
+checksum = "a564d521dd56509c4c47480d00b80ee55f7e385ae48db5744c67ad50c92d2ebf"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2294,7 +2294,6 @@ dependencies = [
 [[package]]
 name = "graphcast-sdk"
 version = "0.3.4"
-source = "git+https://github.com/graphops/graphcast-sdk#d0e383d06b94cc27cc3f0e00744443cc7a98f8b6"
 dependencies = [
  "anyhow",
  "async-graphql",
@@ -3400,6 +3399,54 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd8b5dd2ae5ed71462c540258bedcb51965123ad7e7ccf4b9a8cafaa4a63576d"
 
 [[package]]
+name = "one-shot"
+version = "0.3.6"
+dependencies = [
+ "anyhow",
+ "async-graphql",
+ "async-graphql-axum",
+ "autometrics",
+ "axum 0.5.17",
+ "cargo-husky",
+ "chrono",
+ "clap",
+ "derive-getters",
+ "dotenv",
+ "ethers",
+ "ethers-contract",
+ "ethers-core 2.0.7",
+ "ethers-derive-eip712",
+ "graphcast-sdk",
+ "graphql_client 0.9.0",
+ "hex",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "num-bigint",
+ "num-traits",
+ "once_cell",
+ "opentelemetry",
+ "partial_application",
+ "poi-radio",
+ "prometheus",
+ "prost",
+ "rand 0.8.5",
+ "regex",
+ "reqwest",
+ "secp256k1 0.25.0",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "sha3",
+ "thiserror",
+ "tokio",
+ "tower-http 0.4.1",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "wiremock",
+]
+
+[[package]]
 name = "oorandom"
 version = "11.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3837,6 +3884,7 @@ dependencies = [
  "anyhow",
  "async-graphql",
  "async-graphql-axum",
+ "async-trait",
  "autometrics",
  "axum 0.5.17",
  "cargo-husky",

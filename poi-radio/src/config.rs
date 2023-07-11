@@ -6,8 +6,7 @@ use graphcast_sdk::{
     build_wallet,
     callbook::CallBook,
     graphcast_agent::{
-        message_typing::IdentityValidation, GraphcastAgent, GraphcastAgentConfig,
-        GraphcastAgentError,
+        message_typing::IdentityValidation, GraphcastAgentConfig, GraphcastAgentError,
     },
     graphql::{
         client_network::query_network_subgraph, client_registry::query_registry, QueryError,
@@ -286,6 +285,7 @@ pub struct Config {
         long,
         value_name = "ID_VALIDATION",
         value_enum,
+        default_value = "registered-indexer",
         env = "ID_VALIDATION",
         help = "Identity validaiton mechanism for message signers",
         long_help = "Identity validaiton mechanism for message signers\n
@@ -407,16 +407,11 @@ impl Config {
         }
     }
 
-    pub async fn create_graphcast_agent(&self) -> Result<GraphcastAgent, GraphcastAgentError> {
-        let config = self.to_graphcast_agent_config().await.unwrap();
-        GraphcastAgent::new(config).await
-    }
-
     pub fn callbook(&self) -> CallBook {
         CallBook::new(
-            self.graph_node_endpoint.clone(),
             self.registry_subgraph.clone(),
-            Some(self.network_subgraph.clone()),
+            self.network_subgraph.clone(),
+            Some(self.graph_node_endpoint.clone()),
         )
     }
 

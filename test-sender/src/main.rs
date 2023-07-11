@@ -1,5 +1,3 @@
-use std::{net::IpAddr, str::FromStr, thread::sleep, time::Duration};
-
 use chrono::Utc;
 use clap::Parser;
 use graphcast_sdk::{
@@ -10,8 +8,10 @@ use graphcast_sdk::{
     },
     init_tracing,
     networks::NetworkName,
+    wallet_address,
 };
 use poi_radio::messages::poi::PublicPoiMessage;
+use std::{net::IpAddr, str::FromStr, thread::sleep, time::Duration};
 use test_utils::{config::TestSenderConfig, dummy_msg::DummyMsg, find_random_udp_port};
 use tracing::{error, info};
 use waku::{
@@ -81,7 +81,7 @@ async fn start_sender(config: TestSenderConfig) {
             let content_topic = format!("/{}/0/{}/proto", config.radio_name, topic);
             let content_topic = WakuContentTopic::from_str(&content_topic).unwrap();
 
-            let nonce = config.nonce.clone().unwrap().parse::<i64>().unwrap();
+            // let nonce = config.nonce.clone().unwrap().parse::<i64>().unwrap();
 
             let radio_payload_clone = config.radio_payload.clone();
             match radio_payload_clone.as_deref() {
@@ -89,7 +89,7 @@ async fn start_sender(config: TestSenderConfig) {
                     let radio_payload = PublicPoiMessage::build(
                         topic.clone(),
                         config.poi.clone().unwrap(),
-                        nonce,
+                        timestamp,
                         NetworkName::Goerli,
                         timestamp.try_into().unwrap(),
                         config.block_hash.clone().unwrap(),
@@ -100,11 +100,16 @@ async fn start_sender(config: TestSenderConfig) {
                         &wallet,
                         topic.clone(),
                         "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
-                        nonce,
+                        timestamp,
                         radio_payload,
                     )
                     .await
                     .unwrap();
+
+                    assert!(
+                        wallet_address(&wallet)
+                            == graphcast_message.recover_sender_address().unwrap()
+                    );
 
                     match graphcast_message.send_to_waku(
                         &node_handle,

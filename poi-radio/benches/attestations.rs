@@ -6,10 +6,10 @@ mod attestation {
     use criterion::{black_box, criterion_group, Criterion};
     use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
     use poi_radio::{
+        messages::poi::PublicPoiMessage,
         operator::attestation::{
             compare_attestations, local_comparison_point, update_blocks, Attestation,
         },
-        RadioPayloadMessage,
     };
     use std::collections::HashMap;
 
@@ -140,12 +140,12 @@ mod attestation {
         });
     }
 
-    pub fn test_msg_vec() -> Vec<GraphcastMessage<RadioPayloadMessage>> {
+    pub fn test_msg_vec() -> Vec<GraphcastMessage<PublicPoiMessage>> {
         vec![GraphcastMessage {
             identifier: String::from("hash"),
             nonce: 2,
             graph_account: String::from("0x7e6528e4ce3055e829a32b5dc4450072bac28bc6"),
-            payload: RadioPayloadMessage {
+            payload: PublicPoiMessage {
                 identifier: String::from("hash"),
                 content: String::from("awesome-npoi"),
                 nonce: 2,

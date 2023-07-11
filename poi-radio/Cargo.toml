@@ -10,7 +10,8 @@ keywords = ["graphprotocol", "data-integrity", "Indexer", "waku", "p2p"]
 categories = ["network-programming", "web-programming::http-client"]
 
 [dependencies]
-graphcast-sdk = { package = "graphcast-sdk", git = "https://github.com/graphops/graphcast-sdk" }
+# graphcast-sdk = { package = "graphcast-sdk", git = "https://github.com/graphops/graphcast-sdk", rev = "f39cb28" }
+graphcast-sdk = { package = "graphcast-sdk", path = "../../graphcast-rs" }
 prost = "0.11"
 once_cell = "1.17"
 chrono = "0.4"
@@ -51,6 +52,7 @@ prometheus = "0.13.3"
 tower-http = { version = "0.4.0", features = ["trace", "cors"] }
 async-graphql = "4.0.16"
 async-graphql-axum = "4.0.16"
+async-trait = "0.1.71"
 metrics = "0.20.1"
 metrics-exporter-prometheus = "0.11.0"
 opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }

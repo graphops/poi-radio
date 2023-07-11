@@ -1,9 +1,9 @@
 use derive_getters::Getters;
-
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex as SyncMutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
-use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::{interval, sleep, timeout};
 use tracing::{debug, error, info, trace, warn};
 
@@ -16,7 +16,7 @@ use graphcast_sdk::{
 use crate::chainhead_block_str;
 use crate::messages::poi::PublicPoiMessage;
 
-
+use crate::messages::upgrade::VersionUpgradeMessage;
 use crate::metrics::handle_serve_metrics;
 use crate::operator::attestation::log_gossip_summary;
 use crate::operator::attestation::process_comparison_results;
@@ -103,16 +103,78 @@ impl RadioOperator {
         let persisted_state: PersistedState = config.init_radio_state().await;
 
         debug!("Initializing Graphcast Agent");
-        let graphcast_agent = Arc::new(
-            config
-                .create_graphcast_agent()
+        let (agent, receiver) =
+            GraphcastAgent::new(config.to_graphcast_agent_config().await.unwrap())
                 .await
-                .expect("Initialize Graphcast agent"),
-        );
+                .expect("Initialize Graphcast agent");
+        let graphcast_agent = Arc::new(agent);
+
         debug!("Set global static instance of graphcast_agent");
         _ = GRAPHCAST_AGENT.set(graphcast_agent.clone());
 
         let notifier = Notifier::from_config(config);
+
+        let state_ref = persisted_state.clone();
+        let upgrade_notifier = notifier.clone();
+        let graph_node = config.graph_node_endpoint().clone();
+        // try message format in order of PublicPOIMessage, VersionUpgradeMessage
+        tokio::spawn(async move {
+            for msg in receiver {
+                trace!("Decoding waku message into Graphcast Message with Radio specified payload");
+                let agent = GRAPHCAST_AGENT
+                    .get()
+                    .expect("Could not retrieve Graphcast agent");
+                if let Ok(msg) = agent.decoder::<PublicPoiMessage>(msg.payload()).await {
+                    trace!(
+                        message = tracing::field::debug(&msg),
+                        "Parsed and validated as Public PoI message",
+                    );
+                    let identifier = msg.identifier.clone();
+
+                    let is_valid = msg.payload.validity_check(&msg, &graph_node).await;
+
+                    if is_valid.is_ok() {
+                        state_ref.add_remote_message(msg.clone());
+                        CACHED_MESSAGES.with_label_values(&[&identifier]).set(
+                            state_ref
+                                .remote_messages()
+                                .iter()
+                                .filter(|m| m.identifier == identifier)
+                                .collect::<Vec<&GraphcastMessage<PublicPoiMessage>>>()
+                                .len()
+                                .try_into()
+                                .unwrap(),
+                        );
+                    };
+                } else if let Ok(msg) = agent.decoder::<VersionUpgradeMessage>(msg.payload()).await
+                {
+                    trace!(
+                        message = tracing::field::debug(&msg),
+                        "Parsed and validated as Version Upgrade message",
+                    );
+                    let is_valid = msg.payload.validity_check(&msg, &graph_node).await;
+
+                    if let Ok(payload) = is_valid {
+                        // send notifications to the indexer?
+                        upgrade_notifier.notify(format!(
+                                "Subgraph owner for a deployment has shared version upgrade info:\nold deployment: {}\nnew deployment: {}\nplanned migrate time: {}\nnetwork: {}",
+                                payload.identifier,
+                                payload.new_hash,
+                                payload.migrate_time,
+                                payload.network
+                            )).await;
+                    };
+                } else {
+                    trace!("Waku message not decoded or validated, skipped message",);
+                };
+            }
+        });
+
+        GRAPHCAST_AGENT
+            .get()
+            .unwrap()
+            .register_handler()
+            .expect("Could not register handler");
 
         RadioOperator {
             config: config.clone(),
@@ -144,88 +206,7 @@ impl RadioOperator {
         self.graphcast_agent
             .update_content_topics(topics.clone())
             .await;
-
-        // let (poi_sender, poi_receiver) = mpsc::channel::<GraphcastMessage<PublicPoiMessage>>();
-        // let (version_sender, version_receiver) = mpsc::channel::<GraphcastMessage<VersionUpgradeMessage>>();
-
-        let (sender, receiver) = mpsc::channel::<GraphcastMessage<PublicPoiMessage>>();
-        let handler = RadioOperator::radio_msg_handler::<PublicPoiMessage>(SyncMutex::new(sender));
-        GRAPHCAST_AGENT
-            .get()
-            .unwrap()
-            .register_handler(Arc::new(AsyncMutex::new(handler)))
-            .expect("Could not register handler");
-        let state_ref = self.persisted_state.clone();
-
-        let config = self.config.clone();
-
-        let graph_node = self.config.graph_node_endpoint().clone();
-        tokio::spawn(async move {
-            for msg in receiver {
-                trace!(
-                    "Radio operator received a validated message from Graphcast agent: {:#?}",
-                    msg
-                );
-                // let identifier = msg.identifier.clone();
-
-                // let is_valid = msg
-                //     .validity_check(&msg, config.graph_node_endpoint())
-                //     .await;
-
-                // if is_valid.is_ok() {
-                //     state_ref.add_remote_message(msg.clone());
-                // }
-
-                // CACHED_MESSAGES.with_label_values(&[&identifier]).set(
-                //     state_ref
-                //         .remote_messages()
-                //         .iter()
-                //         .filter(|m| m.identifier == identifier)
-                //         .collect::<Vec<&GraphcastMessage<RadioPayloadMessage>>>()
-                //         .len()
-                //         .try_into()
-                //         .unwrap(),
-                // );
-                let identifier = msg.identifier.clone();
-
-                let is_valid = msg.payload.validity_check(&msg, &graph_node).await;
-                if is_valid.is_ok() {
-                    state_ref.add_remote_message(msg.clone());
-                }
-                CACHED_MESSAGES.with_label_values(&[&identifier]).set(
-                    state_ref
-                        .remote_messages()
-                        .iter()
-                        .filter(|m| m.identifier == identifier)
-                        .collect::<Vec<&GraphcastMessage<PublicPoiMessage>>>()
-                        .len()
-                        .try_into()
-                        .unwrap(),
-                );
-            }
-        });
     }
-    //     for msg in receiver {
-    //         //
-    //         trace!(
-    //             "Radio operator received a validated message from Graphcast agent: {:#?}",
-    //             msg
-    //         );
-
-    //         // let identifier = msg.identifier.clone();
-    //         // state_ref.add_remote_message(msg.clone());
-    //         // CACHED_MESSAGES.with_label_values(&[&identifier]).set(
-    //         //     state_ref
-    //         //         .remote_messages()
-    //         //         .iter()
-    //         //         .filter(|m| m.identifier == identifier)
-    //         //         .collect::<Vec<&GraphcastMessage<PublicPoiMessage>>>()
-    //         //         .len()
-    //         //         .try_into()
-    //         //         .unwrap(),
-    //         // );
-    //     }
-    // });
 
     pub fn graphcast_agent(&self) -> &GraphcastAgent {
         &self.graphcast_agent
@@ -315,7 +296,7 @@ impl RadioOperator {
                                 res,
                             ),
                             Err(e) => {
-                                error!(err = tracing::field::debug(&e), "Could not query indexing statuses, pull again later");
+                                error!(err = tracing::field::debug(&e), "Could not query indexing statuses, failed to get network chainhead, pull again later");
                                 continue;
                             }
                         };
@@ -323,7 +304,7 @@ impl RadioOperator {
                         let subgraph_network_latest_blocks = match self.config.callbook().indexing_statuses().await {
                             Ok(res) => subgraph_network_blocks(res),
                             Err(e) => {
-                                error!(err = tracing::field::debug(&e), "Could not query indexing statuses, pull again later");
+                                error!(err = tracing::field::debug(&e), "Could not query indexing statuses, failed to get subgraph latest block, pull again later");
                                 continue;
                             }
                         };
@@ -378,7 +359,7 @@ impl RadioOperator {
                         let indexing_status = match self.config.callbook().indexing_statuses().await {
                             Ok(res) => res,
                             Err(e) => {
-                                error!(err = tracing::field::debug(&e), "Could not query indexing statuses, pull again later");
+                                error!(err = tracing::field::debug(&e), "Could not query indexing statuses for comparison, pull again later");
                                 continue;
                             }
                         };

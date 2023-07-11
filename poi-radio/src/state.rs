@@ -204,10 +204,7 @@ impl PersistedState {
         };
 
         if should_notify {
-            notifier
-                .clone()
-                .notify(updated_comparison_result.to_string())
-                .await;
+            notifier.notify(updated_comparison_result.to_string()).await;
         }
 
         result_type

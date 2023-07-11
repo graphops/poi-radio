@@ -1,29 +1,15 @@
-use async_graphql::{SimpleObject};
+use async_graphql::SimpleObject;
 
-use chrono::Utc;
 use ethers_contract::EthAbiType;
 use ethers_core::types::transaction::eip712::Eip712;
 use ethers_derive_eip712::*;
-
-use prost::Message;
-use serde::{Deserialize, Serialize};
-
-
-
-
+use graphcast_sdk::graphql::client_graph_account::owned_subgraphs;
 use graphcast_sdk::{
-    graphql::{
-        client_graph_account::owned_subgraphs,
-    },
-};
-use graphcast_sdk::{
-    graphcast_agent::{
-        message_typing::{BuildMessageError, GraphcastMessage},
-    },
+    graphcast_agent::message_typing::{BuildMessageError, GraphcastMessage},
     networks::NetworkName,
 };
-
-
+use prost::Message;
+use serde::{Deserialize, Serialize};
 
 #[derive(Eip712, EthAbiType, Clone, Message, Serialize, Deserialize, PartialEq, SimpleObject)]
 #[eip712(
@@ -80,6 +66,7 @@ impl VersionUpgradeMessage {
     pub fn build(
         identifier: String,
         new_hash: String,
+        timestamp: i64,
         subgraph_id: String,
         network: NetworkName,
         migrate_time: i64,
@@ -89,7 +76,7 @@ impl VersionUpgradeMessage {
             identifier,
             new_hash,
             subgraph_id,
-            Utc::now().timestamp(),
+            timestamp,
             network.to_string(),
             migrate_time,
             graph_account,

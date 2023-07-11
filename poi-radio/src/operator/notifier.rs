@@ -53,7 +53,7 @@ impl Notifier {
         )
     }
 
-    pub async fn notify(self, content: String) {
+    pub async fn notify(&self, content: String) {
         if let (Some(token), Some(channel)) = (&self.slack_token, &self.slack_channel) {
             if let Err(e) =
                 SlackBot::send_webhook(token.to_string(), channel, &self.radio_name, &content).await

@@ -1,29 +1,25 @@
 use autometrics::autometrics;
 use chrono::Utc;
 use graphcast_sdk::callbook::CallBook;
-use prost::Message;
-use std::any::Any;
 use std::cmp::max;
 use std::collections::HashMap;
-use std::sync::{mpsc, Arc, Mutex as SyncMutex};
+use std::sync::{Arc, Mutex as SyncMutex};
 use tracing::{debug, error, trace, warn};
 
 use graphcast_sdk::{
     determine_message_block,
     graphcast_agent::{
         message_typing::{BuildMessageError, GraphcastMessage},
-        waku_handling::WakuHandlingError,
         GraphcastAgent, GraphcastAgentError,
     },
     networks::NetworkName,
     BlockPointer, NetworkBlockError, NetworkPointer,
 };
 
-
-use crate::messages::{poi::PublicPoiMessage, upgrade::VersionUpgradeMessage};
+use crate::messages::poi::PublicPoiMessage;
 use crate::operator::attestation::process_ppoi_message;
 use crate::{
-    metrics::{CACHED_MESSAGES, VALIDATED_MESSAGES},
+    metrics::CACHED_MESSAGES,
     operator::{
         attestation::{
             compare_attestations, local_comparison_point, save_local_attestation, Attestation,
@@ -265,162 +261,6 @@ pub async fn message_comparison(
 }
 
 impl RadioOperator {
-    /// Custom callback for handling the validated GraphcastMessage, in this case we only save the messages to a local store
-    /// to process them at a later time. This is required because for the processing we use async operations which are not allowed
-    /// in the handler.
-    #[autometrics]
-    pub fn radio_msg_handler<T>(
-        poi_sender: SyncMutex<mpsc::Sender<GraphcastMessage<PublicPoiMessage>>>,
-        // sender: SyncMutex<mpsc::Sender<GraphcastMessage<T>>>,
-    ) -> impl Fn(Result<GraphcastMessage<T>, WakuHandlingError>)
-    //     sender: SyncMutex<mpsc::Sender<MessageType>>,
-    // ) -> impl Fn(&dyn Any)
-    where
-        T: Message
-            + ethers::types::transaction::eip712::Eip712
-            + Default
-            + Clone
-            + 'static
-            + async_graphql::OutputType,
-    {
-        // move |msg: &dyn Any| {
-        move |msg: Result<GraphcastMessage<T>, WakuHandlingError>| {
-            // TODO: Handle the error case by incrementing a Prometheus "error" counter
-            if let Ok(msg) = msg {
-                trace!(
-                    msg = tracing::field::debug(&msg),
-                    "Received Graphcast validated message"
-                );
-
-                let id = msg.identifier.clone();
-                VALIDATED_MESSAGES.with_label_values(&[&id]).inc();
-                // typed_handler(sender, &msg);
-
-                let any_msg: &dyn Any = &msg;
-                trace!(
-                    any_msg = tracing::field::debug(any_msg),
-                    "Received Graphcast validated message"
-                );
-                if let Some(ppoi_message) = &any_msg.downcast_ref::<GraphcastMessage<PublicPoiMessage>>() {
-
-                        // let id = any_msg.identifier.clone();
-                        // VALIDATED_MESSAGES.with_label_values(&[&id]).inc();
-
-                        match poi_sender.lock().unwrap().send((*ppoi_message).clone()) {
-                            Ok(_) => trace!("Sent received public POI message to radio operator"),
-                            Err(e) => error!("Could not send message to channel: {:#?}", e),
-                        }
-                    } else if let Some(Ok(upgrade_message)) = any_msg.downcast_ref::<Result<GraphcastMessage<VersionUpgradeMessage>, WakuHandlingError>>() {
-                        trace!(
-                            upgrade_message = tracing::field::debug(&upgrade_message),
-                            "Received Graphcast validated message"
-                        );
-
-                        // // let id = upgrade_message.identifier.clone();
-                        // // VALIDATED_MESSAGES.with_label_values(&[&id]).inc();
-
-                        // match sender.lock().unwrap().send(MessageType::VersionUpgrade(upgrade_message.clone())) {
-                        //     Ok(_) => trace!("Sent upgrade message to radio operator"),
-                        //     Err(e) => error!("Could not send message to channel: {:#?}", e),
-                        // }
-                    }
-
-                //TODO: Make sure CACHED_MESSAGES is updated
-            }
-        }
-    }
-
-    // /// Construct the message and send it to Graphcast network
-    // #[autometrics(track_concurrency)]
-    // pub async fn create_radio_message(
-    //     &self,
-    //     id: String,
-    //     message_block: u64,
-    //     latest_block: BlockPointer,
-    //     network_name: NetworkName,
-    // ) -> Result<PublicPoiMessage, OperationError> {
-    //     trace!(
-    //         message_block = message_block,
-    //         latest_block = latest_block.number,
-    //         "Check message send requirement",
-    //     );
-
-    //     // Deployment did not sync to message_block
-    //     if latest_block.number < message_block {
-    //         //TODO: fill in variant in SDK
-    //         let err_msg = format!(
-    //             "Did not send message for deployment {}: latest_block ({}) syncing status must catch up to the message block ({})",
-    //             id.clone(),
-    //             latest_block.number, message_block,
-    //         );
-    //         trace!(err = err_msg, "Skip send",);
-    //         return Err(OperationError::SendTrigger(err_msg));
-    //     };
-
-    //     // Skip messages that has been sent before
-    //     if self
-    //         .state()
-    //         .local_attestations()
-    //         .get(&id.clone())
-    //         .and_then(|blocks| blocks.get(&message_block))
-    //         .is_some()
-    //     {
-    //         let err_msg = format!(
-    //             "Repeated message for deployment {}, skip sending message for block: {}",
-    //             id.clone(),
-    //             message_block
-    //         );
-    //         trace!(err = err_msg, "Skip send");
-    //         return Err(OperationError::SkipDuplicate(err_msg));
-    //     }
-
-    //     let block_hash = match self
-    //         .config
-    //         .callbook()
-    //         .block_hash(&network_name.to_string(), message_block)
-    //         .await
-    //     {
-    //         Ok(hash) => hash,
-    //         Err(e) => {
-    //             let err_msg = format!("Failed to query graph node for the block hash: {e}");
-    //             error!(err = err_msg, "Failed to send message");
-    //             return Err(OperationError::Query(e));
-    //         }
-    //     };
-
-    //     match self
-    //         .config
-    //         .callbook()
-    //         .query_poi(
-    //             id.clone(),
-    //             block_hash.clone(),
-    //             message_block.try_into().unwrap(),
-    //         )
-    //         .await
-    //     {
-    //         Ok(content) => Ok(PublicPoiMessage::build(
-    //             id.clone(),
-    //             content,
-    //             network_name,
-    //             message_block,
-    //             block_hash,
-    //             self.graphcast_agent
-    //                 .graphcast_identity
-    //                 .graph_account
-    //                 .clone(),
-    //         )),
-    //         Err(e) => {
-    //             error!(
-    //                 err = tracing::field::debug(&e),
-    //                 "Failed to query message content"
-    //             );
-    //             Err(OperationError::Agent(
-    //                 GraphcastAgentError::QueryResponseError(e),
-    //             ))
-    //         }
-    //     }
-    // }
-
     pub async fn gossip_poi(
         &self,
         identifiers: Vec<String>,

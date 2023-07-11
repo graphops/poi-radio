@@ -1,8 +1,6 @@
 use async_graphql::{Error, ErrorExtensions};
 use autometrics::autometrics;
-use ethers_contract::EthAbiType;
-use ethers_core::types::transaction::eip712::Eip712;
-use ethers_derive_eip712::*;
+
 use once_cell::sync::OnceCell;
 use std::{
     collections::HashMap,
@@ -12,24 +10,15 @@ use std::{
     },
 };
 use tokio::signal;
-use tracing::{error};
-
+use tracing::error;
 
 use graphcast_sdk::{
-    graphcast_agent::GraphcastAgentError,
-    graphql::{
-        client_graph_node::get_indexing_statuses, QueryError,
-    },
+    graphcast_agent::GraphcastAgent, graphql::client_network::query_network_subgraph,
+    networks::NetworkName, BlockPointer,
 };
 use graphcast_sdk::{
-    graphcast_agent::{
-        GraphcastAgent,
-    },
-    graphql::{
-        client_network::query_network_subgraph,
-    },
-    networks::NetworkName,
-    BlockPointer,
+    graphcast_agent::GraphcastAgentError,
+    graphql::{client_graph_node::get_indexing_statuses, QueryError},
 };
 
 use crate::operator::{attestation::AttestationError, RadioOperator};
@@ -51,7 +40,7 @@ pub static RADIO_OPERATOR: OnceCell<RadioOperator> = OnceCell::new();
 pub static GRAPHCAST_AGENT: OnceCell<Arc<GraphcastAgent>> = OnceCell::new();
 
 pub fn radio_name() -> &'static str {
-    "subgraph-radio"
+    "poi-radio"
 }
 
 /// Generate default topics that is operator address resolved to indexer address
@@ -173,10 +162,8 @@ impl ErrorExtensions for OperationError {
 
 #[cfg(test)]
 mod tests {
-    use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
     use crate::messages::poi::PublicPoiMessage;
-
-    use super::*;
+    use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
 
     fn simple_message() -> PublicPoiMessage {
         PublicPoiMessage::new(
