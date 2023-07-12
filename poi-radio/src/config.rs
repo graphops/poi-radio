@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tracing::{debug, info, trace};
 
-use crate::state::PersistedState;
+use crate::state::{panic_hook, PersistedState};
 use crate::{active_allocation_hashes, syncing_deployment_hashes};
 
 #[derive(clap::ValueEnum, Clone, Debug, Serialize, Deserialize, Default)]
@@ -400,6 +400,7 @@ impl Config {
                 "Loaded Persisted state cache"
             );
 
+            panic_hook(path);
             state
         } else {
             debug!("Created new state");

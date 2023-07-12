@@ -1,14 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+use std::panic::PanicInfo;
 use std::path::Path;
 
-use std::fs;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::{
     collections::HashMap,
     fs::{remove_file, File},
     io::{BufReader, Write},
 };
+use std::{fs, panic};
 use tracing::{info, trace, warn};
 
 use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
@@ -17,6 +19,7 @@ use crate::operator::attestation::{
     clear_local_attestation, ComparisonResult, ComparisonResultType,
 };
 use crate::operator::notifier::Notifier;
+use crate::RADIO_OPERATOR;
 
 use crate::{messages::poi::PublicPoiMessage, operator::attestation::Attestation};
 
@@ -283,21 +286,21 @@ impl PersistedState {
 }
 
 // TODO: panic hook for updating the cache file before exiting the program
-// /// Set up panic hook to store persisted state
-// pub fn panic_hook<'a>(file_path: &str) {
-//     let path = String::from_str(file_path).expect("Invalid file path provided");
-//     panic::set_hook(Box::new(move |panic_info| panic_cache(panic_info, &path)));
-// }
+/// Set up panic hook to store persisted state
+pub fn panic_hook(file_path: &str) {
+    let path = String::from_str(file_path).expect("Invalid file path provided");
+    panic::set_hook(Box::new(move |panic_info| panic_cache(panic_info, &path)));
+}
 
-// pub fn panic_cache(panic_info: &PanicInfo<'_>, file_path: &str) {
-//     RADIO_OPERATOR
-//         .get()
-//         .unwrap()
-//         .state()
-//         .update_cache(file_path);
-//     // Log panic information and program state
-//     eprintln!("Panic occurred! Panic info: {:?}", panic_info);
-// }
+pub fn panic_cache(panic_info: &PanicInfo<'_>, file_path: &str) {
+    RADIO_OPERATOR
+        .get()
+        .unwrap()
+        .state()
+        .update_cache(file_path);
+    // Log panic information and program state
+    eprintln!("Panic occurred! Panic info: {:?}", panic_info);
+}
 
 #[cfg(test)]
 mod tests {

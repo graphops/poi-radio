@@ -108,16 +108,16 @@ pub async fn topics_test() {
 
     tokio::time::sleep(Duration::from_secs(50)).await;
 
-    let persisted_state = PersistedState::load_cache(&store_path);
-    debug!("persisted state {:?}", persisted_state);
-
-    let remote_messages = persisted_state.remote_messages();
-
     let test_hash = "QmonlyintestsenderXyZABCdeFgHIjklMNOpqrstuvWXYZabcdEFG";
-    let has_test_hash = remote_messages
-        .iter()
-        .any(|msg| msg.identifier == test_hash);
+    let mut has_test_hash = test_result(&store_path, test_hash);
 
+    let max_test_attempts = 3;
+    let mut num_test_attempts = 0;
+    while num_test_attempts < max_test_attempts && !has_test_hash {
+        tokio::time::sleep(Duration::from_secs(config.topic_update_interval + 1)).await;
+        has_test_hash = test_result(&store_path, test_hash);
+        num_test_attempts += 1;
+    }
     assert!(
         has_test_hash,
         "Expected remote message not found with identifier {}",
@@ -125,4 +125,14 @@ pub async fn topics_test() {
     );
 
     teardown(process_manager, &store_path);
+}
+
+fn test_result(store_path: &str, test_hash: &str) -> bool {
+    let persisted_state = PersistedState::load_cache(store_path);
+    debug!("persisted state {:?}", persisted_state);
+
+    let remote_messages = persisted_state.remote_messages();
+    remote_messages
+        .iter()
+        .any(|msg| msg.identifier == test_hash)
 }

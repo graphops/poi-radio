@@ -9,7 +9,11 @@ use tracing::{debug, error, info, trace, warn};
 
 use graphcast_sdk::{
     build_wallet,
-    graphcast_agent::{message_typing::GraphcastMessage, GraphcastAgent},
+    graphcast_agent::{
+        message_typing::{check_message_validity, GraphcastMessage},
+        waku_handling::WakuHandlingError,
+        GraphcastAgent,
+    },
     graphql::client_graph_node::{subgraph_network_blocks, update_network_chainheads},
 };
 
@@ -117,6 +121,7 @@ impl RadioOperator {
         let state_ref = persisted_state.clone();
         let upgrade_notifier = notifier.clone();
         let graph_node = config.graph_node_endpoint().clone();
+
         // try message format in order of PublicPOIMessage, VersionUpgradeMessage
         tokio::spawn(async move {
             for msg in receiver {
@@ -124,11 +129,35 @@ impl RadioOperator {
                 let agent = GRAPHCAST_AGENT
                     .get()
                     .expect("Could not retrieve Graphcast agent");
+                let id_validation = agent.id_validation.clone();
+                let callbook = agent.callbook.clone();
+                let nonces = agent.nonces.clone();
+                let local_sender = agent.graphcast_identity.graphcast_id.clone();
                 if let Ok(msg) = agent.decoder::<PublicPoiMessage>(msg.payload()).await {
                     trace!(
                         message = tracing::field::debug(&msg),
-                        "Parsed and validated as Public PoI message",
+                        "Parseable as Public PoI message, now validate",
                     );
+                    let msg = match check_message_validity(
+                        msg,
+                        &nonces,
+                        callbook.clone(),
+                        local_sender.clone(),
+                        &id_validation,
+                    )
+                    .await
+                    .map_err(|e| WakuHandlingError::InvalidMessage(e.to_string()))
+                    {
+                        Ok(msg) => msg,
+                        Err(e) => {
+                            debug!(
+                                err = tracing::field::debug(e),
+                                "Failed to validate by Graphcast"
+                            );
+                            continue;
+                        }
+                    };
+
                     let identifier = msg.identifier.clone();
 
                     let is_valid = msg.payload.validity_check(&msg, &graph_node).await;
@@ -150,8 +179,27 @@ impl RadioOperator {
                 {
                     trace!(
                         message = tracing::field::debug(&msg),
-                        "Parsed and validated as Version Upgrade message",
+                        "Parseable as Version Upgrade message, now validate",
                     );
+                    let msg = match check_message_validity(
+                        msg,
+                        &nonces,
+                        callbook.clone(),
+                        local_sender.clone(),
+                        &id_validation,
+                    )
+                    .await
+                    .map_err(|e| WakuHandlingError::InvalidMessage(e.to_string()))
+                    {
+                        Ok(msg) => msg,
+                        Err(e) => {
+                            debug!(
+                                err = tracing::field::debug(e),
+                                "Failed to validate by Graphcast"
+                            );
+                            continue;
+                        }
+                    };
                     let is_valid = msg.payload.validity_check(&msg, &graph_node).await;
 
                     if let Ok(payload) = is_valid {

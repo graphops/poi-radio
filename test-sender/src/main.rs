@@ -71,9 +71,6 @@ async fn start_sender(config: TestSenderConfig) {
     let pubsub_topic = WakuPubSubTopic::from_str(pubsub_topic_str).unwrap();
     loop {
         for topic in config.topics.clone() {
-            let timestamp = Utc::now().timestamp();
-            let timestamp = (timestamp + 9) / 10 * 10;
-
             let nodes = gather_nodes(vec![], &pubsub_topic);
             // Connect to peers on the filter protocol
             connect_multiaddresses(nodes, &node_handle, ProtocolId::Filter);
@@ -81,7 +78,13 @@ async fn start_sender(config: TestSenderConfig) {
             let content_topic = format!("/{}/0/{}/proto", config.radio_name, topic);
             let content_topic = WakuContentTopic::from_str(&content_topic).unwrap();
 
-            // let nonce = config.nonce.clone().unwrap().parse::<i64>().unwrap();
+            let timestamp =
+                if let Some(n) = config.nonce.clone().and_then(|x| x.parse::<i64>().ok()) {
+                    n
+                } else {
+                    Utc::now().timestamp()
+                };
+            let block_number = (timestamp + 9) / 10 * 10;
 
             let radio_payload_clone = config.radio_payload.clone();
             match radio_payload_clone.as_deref() {
@@ -91,7 +94,7 @@ async fn start_sender(config: TestSenderConfig) {
                         config.poi.clone().unwrap(),
                         timestamp,
                         NetworkName::Goerli,
-                        timestamp.try_into().unwrap(),
+                        block_number.try_into().unwrap(),
                         config.block_hash.clone().unwrap(),
                         "0x7e6528e4ce3055e829a32b5dc4450072bac28bc6".to_string(),
                     );

@@ -59,7 +59,7 @@ pub async fn start_mock_server(
 
 async fn handler_graphql(subgraphs: Arc<Mutex<Vec<String>>>) -> Result<String, Infallible> {
     let timestamp = Utc::now().timestamp();
-    let timestamp = (timestamp + 9) / 10 * 10;
+    let block_number = (timestamp + 9) / 10 * 10;
     let subgraphs = subgraphs.lock().await;
 
     // Prepare indexingStatuses part of the response dynamically from the subgraphs vector
@@ -67,7 +67,7 @@ async fn handler_graphql(subgraphs: Arc<Mutex<Vec<String>>>) -> Result<String, I
         .iter()
         .map(|hash| format!(
             r#"{{"subgraph": "{}", "synced": true, "health": "healthy", "node": "default", "fatalError": null, "chains": [{{"network": "mainnet", "latestBlock": {{"number": "{}", "hash": "b30395958a317ccc06da46782f660ce674cbe6792e5573dc630978c506114a0a"}}, "chainHeadBlock": {{"number": "{}", "hash": "b30395958a317ccc06da46782f660ce674cbe6792e5573dc630978c506114a0a"}}}}]}}"#,
-            hash, timestamp, timestamp
+            hash, block_number, block_number
         ))
         .collect();
 
