@@ -133,7 +133,7 @@ impl RadioOperator {
                 let callbook = agent.callbook.clone();
                 let nonces = agent.nonces.clone();
                 let local_sender = agent.graphcast_identity.graphcast_id.clone();
-                if let Ok(msg) = agent.decoder::<PublicPoiMessage>(msg.payload()).await {
+                if let Ok(msg) = agent.decode::<PublicPoiMessage>(msg.payload()).await {
                     trace!(
                         message = tracing::field::debug(&msg),
                         "Parseable as Public PoI message, now validate",
@@ -175,8 +175,7 @@ impl RadioOperator {
                                 .unwrap(),
                         );
                     };
-                } else if let Ok(msg) = agent.decoder::<VersionUpgradeMessage>(msg.payload()).await
-                {
+                } else if let Ok(msg) = agent.decode::<VersionUpgradeMessage>(msg.payload()).await {
                     trace!(
                         message = tracing::field::debug(&msg),
                         "Parseable as Version Upgrade message, now validate",

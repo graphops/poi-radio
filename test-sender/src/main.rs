@@ -78,12 +78,9 @@ async fn start_sender(config: TestSenderConfig) {
             let content_topic = format!("/{}/0/{}/proto", config.radio_name, topic);
             let content_topic = WakuContentTopic::from_str(&content_topic).unwrap();
 
-            let timestamp =
-                if let Some(n) = config.nonce.clone().and_then(|x| x.parse::<i64>().ok()) {
-                    n
-                } else {
-                    Utc::now().timestamp()
-                };
+            let nonce = config.nonce.clone().and_then(|s| s.parse::<i64>().ok());
+
+            let timestamp = Utc::now().timestamp();
             let block_number = (timestamp + 9) / 10 * 10;
 
             let radio_payload_clone = config.radio_payload.clone();
@@ -92,7 +89,7 @@ async fn start_sender(config: TestSenderConfig) {
                     let radio_payload = PublicPoiMessage::build(
                         topic.clone(),
                         config.poi.clone().unwrap(),
-                        timestamp,
+                        nonce.unwrap_or(timestamp),
                         NetworkName::Goerli,
                         block_number.try_into().unwrap(),
                         config.block_hash.clone().unwrap(),
