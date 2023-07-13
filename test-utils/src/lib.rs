@@ -8,7 +8,6 @@ use std::{
     time::Duration,
 };
 
-use chrono::Utc;
 use config::TestSenderConfig;
 use graphcast_sdk::graphcast_agent::message_typing::GraphcastMessage;
 use graphcast_sdk::graphcast_agent::message_typing::IdentityValidation;
@@ -96,12 +95,7 @@ pub async fn setup(
                 "4dbba1ba9fb18b0034965712598be1368edcf91ae2c551d59462aab578dab9c5".to_string(),
             ))
             .arg("--nonce")
-            .arg(
-                &test_sender_config
-                    .nonce
-                    .clone()
-                    .unwrap_or(Utc::now().timestamp().to_string()),
-            )
+            .arg(test_sender_config.nonce.as_deref().unwrap_or("None"))
             .arg("--radio-payload")
             .arg(
                 test_sender_config
