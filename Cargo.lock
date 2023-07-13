@@ -2294,7 +2294,7 @@ dependencies = [
 [[package]]
 name = "graphcast-sdk"
 version = "0.3.4"
-source = "git+https://github.com/graphops/graphcast-sdk?branch=hope/subgraph-owner-check#29fdf3c1f4ab0b655e424d288c282e67e0a6cc07"
+source = "git+https://github.com/graphops/graphcast-sdk#dcb2653528f7e20521a2b17d671cae41ecf192d2"
 dependencies = [
  "anyhow",
  "async-graphql",
