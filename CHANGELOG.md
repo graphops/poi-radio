@@ -8,6 +8,14 @@ All notable changes to this project will be documented in this file.
 
 - Server context types
 - Remove double Arc Mutex from state types
+- Consistent nonce during build
+- Msg comparison block available on remote
+- Standarlize nonce across graphcast and radio
+- Add test retries and gc msg valid check
+
+### Documentation
+
+- Update grafana config and default network subgraph endpoint
 
 ### Features
 
@@ -16,6 +24,10 @@ All notable changes to this project will be documented in this file.
 - Discv5 configs
 - Add e2e tests
 - Serves represented indexer info query
+- Add msg sender validation options
+- Move e2e tests into separate files and add new scenarios
+- Persist comparison results
+- One-shot radio for version upgrade
 
 ### Miscellaneous Tasks
 
@@ -26,6 +38,10 @@ All notable changes to this project will be documented in this file.
 - Release 0.3.5
 - Update tests
 - Release 0.3.6
+- Fix tests
+- Grafana config and sdk-dep update
+- Update sdk dep to 0.4.0
+- Release 0.4.0
 
 ### Refactor
 
@@ -35,6 +51,11 @@ All notable changes to this project will be documented in this file.
 - New ratio formatting
 - Update logging level
 - Update to new sdk versions
+- Switch to string ref
+- Comparison results query resolver
+- More msg fields and checks
+- Radio message decode and handle multiple types
+- Fix tests
 
 ## [0.3.1] - 2023-05-22
 
